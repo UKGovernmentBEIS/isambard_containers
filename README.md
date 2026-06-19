@@ -34,6 +34,9 @@ This gives you the helper scripts (`vllm-serve`, `benchmark-networking`, …) an
 Containers are built with [Sifter](https://github.com/UKGovernmentBEIS/sifter), a CLI for building Apptainer containers on HPC with Slurm and S3 registry support. Builds are defined in [sifter.yaml](sifter.yaml).
 
 ```bash
+# Clone this repo
+git clone https://github.com/UKGovernmentBEIS/isambard_containers.git
+
 # Install sifter
 uv tool install git+https://github.com/UKGovernmentBEIS/sifter.git
 
