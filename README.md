@@ -21,7 +21,7 @@ See [sifter.yaml](sifter.yaml) for the full list of builds and exact versions.
 ## Install
 
 ```bash
-uv add git+https://github.com/AI-Safety-Institute/hpc-containers.git
+uv add git+https://github.com/UKGovernmentBEIS/isambard_containers.git
 ```
 
 This gives you the helper scripts (`vllm-serve`, `benchmark-networking`, …) and the Python API.

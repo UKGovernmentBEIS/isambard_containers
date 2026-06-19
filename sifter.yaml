@@ -1,4 +1,4 @@
-# HPC Containers Build Manifest
+# Isambard Containers Build Manifest
 #
 # Build all:     sifter build --all
 # Build one:     sifter build vllm-0.17.1
