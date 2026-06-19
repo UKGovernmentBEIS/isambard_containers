@@ -68,6 +68,9 @@ builds:
       - path: definitions/trl/trl.def
         args:
           TRL_VERSION: "1.6.0"
+          # aisi-inspect-tools is a private AISI repo cloned over SSH.
+          # External builders without access should set this to "false".
+          INSTALL_AISI_INSPECT_TOOLS: "true"
 
   # ============================================================
   # vLLM head

@@ -4,6 +4,9 @@
 #
 # Build args (from sifter.yaml):
 #   TRL_EXTRAS: Comma-separated TRL extras (default: peft,deepspeed,liger,quantization,kernels)
+#   INSTALL_AISI_INSPECT_TOOLS: Whether to clone+install aisi-inspect-tools
+#     (default: true). This is a private AISI repo cloned over SSH, so external
+#     builders without access must set this to "false" in sifter.yaml.
 
 Bootstrap: localimage
 From: {{ BASE_IMAGE }}
@@ -11,20 +14,26 @@ From: {{ BASE_IMAGE }}
 %arguments
     TRL_VERSION=0.29.1
     TRL_EXTRAS=peft,deepspeed,liger,quantization,kernels
+    INSTALL_AISI_INSPECT_TOOLS=true
 
 %labels
     Author Isambard User
     Description TRL/PEFT training stack on vLLM base
 
 %setup
-    # Clone aisi-inspect-tools on the host where SSH keys are available.
-    # The container's fakeroot environment has no SSH access.
-    # -F /dev/null: bypass broken /etc/ssh/ssh_config.d/50-suse.conf on compute nodes
-    # -o StrictHostKeyChecking=no: skip host key check (compute nodes have clean known_hosts)
-    GIT_SSH_COMMAND="ssh -F /dev/null -o StrictHostKeyChecking=no" \
-    git clone --depth=1 \
-        git@github.com:AI-Safety-Institute/aisi-inspect-tools.git \
-        "${SINGULARITY_ROOTFS}/opt/aisi-inspect-tools"
+    # Optionally clone aisi-inspect-tools (private AISI repo). Gated by the
+    # INSTALL_AISI_INSPECT_TOOLS build arg so external builders without SSH
+    # access can skip it (set INSTALL_AISI_INSPECT_TOOLS=false in sifter.yaml).
+    if [ "{{ INSTALL_AISI_INSPECT_TOOLS }}" = "true" ]; then
+        # Clone on the host where SSH keys are available.
+        # The container's fakeroot environment has no SSH access.
+        # -F /dev/null: bypass broken /etc/ssh/ssh_config.d/50-suse.conf on compute nodes
+        # -o StrictHostKeyChecking=no: skip host key check (compute nodes have clean known_hosts)
+        GIT_SSH_COMMAND="ssh -F /dev/null -o StrictHostKeyChecking=no" \
+        git clone --depth=1 \
+            git@github.com:AI-Safety-Institute/aisi-inspect-tools.git \
+            "${SINGULARITY_ROOTFS}/opt/aisi-inspect-tools"
+    fi
 
 %post
     # Re-pin vllm, torch, transformers, datasets and trl to prevent accidental downgrades
@@ -60,10 +69,13 @@ From: {{ BASE_IMAGE }}
     # cut_cross_entropy, torchao, triton-kernels are unsloth_zoo runtime deps not already present
     pip install -c /tmp/constraints.txt "cut_cross_entropy" "torchao" "triton-kernels"
 
-    # Install aisi-inspect-tools (cloned in %setup via SSH into /opt to avoid
-    # Apptainer shadowing /tmp between %setup and %post)
-    pip install -c /tmp/constraints.txt /opt/aisi-inspect-tools
-    rm -rf /opt/aisi-inspect-tools
+    # Install aisi-inspect-tools if it was cloned in %setup (gated by the
+    # INSTALL_AISI_INSPECT_TOOLS build arg). Cloned into /opt to avoid Apptainer
+    # shadowing /tmp between %setup and %post.
+    if [ "{{ INSTALL_AISI_INSPECT_TOOLS }}" = "true" ]; then
+        pip install -c /tmp/constraints.txt /opt/aisi-inspect-tools
+        rm -rf /opt/aisi-inspect-tools
+    fi
 
     # Install Flash Attention 2/3 from source (no pre-built wheels for sm_90/aarch64)
     # ptxas is already patched to 12.8.93 in the base image (fixes nvcc segfault on FA3)
