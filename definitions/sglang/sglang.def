@@ -1,0 +1,115 @@
+# SGLang layer with GH200 (sm_90) source compilation
+#
+# Build args (from sifter.yaml):
+#   SGLANG_VERSION: Git tag (e.g., "v0.5.6.post2") or branch (e.g., "main")
+#
+# This version compiles sgl-kernel from source with CUDA architecture 9.0
+# for NVIDIA GH200 (Grace Hopper). FlashInfer uses JIT compilation at runtime.
+#
+# Build time: ~30-60 minutes (kernel compilation is slow)
+
+Bootstrap: localimage
+From: {{ BASE_IMAGE }}
+
+%arguments
+    SGLANG_VERSION=v0.5.6.post2
+
+%labels
+    Author Isambard User
+    SGLang {{ SGLANG_VERSION }}
+    Description SGLang {{ SGLANG_VERSION }} with GH200 (sm_90) kernels
+
+%post
+    SGLANG_VERSION="{{ SGLANG_VERSION }}"
+
+    # Set CUDA architecture for GH200 at BUILD time
+    export TORCH_CUDA_ARCH_LIST="9.0"
+    export CUDA_ARCHITECTURES="90"
+    export MAX_JOBS=1  # Single job to avoid OOM during CUTLASS compilation
+
+    # Install build dependencies
+    echo ">>> Installing build dependencies..."
+    apt-get update && apt-get install -y --no-install-recommends \
+        ninja-build \
+        cmake \
+        libnuma-dev \
+        libibverbs-dev \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Upgrade setuptools to support PEP 639 license format (required for FlashInfer)
+    # and install build tools for sgl-kernel
+    pip install --upgrade "setuptools>=75" ninja scikit-build-core cmake
+
+    cd /opt
+    echo ">>> Cloning SGLang ${SGLANG_VERSION}..."
+    git clone --depth 1 --branch ${SGLANG_VERSION} https://github.com/sgl-project/sglang.git
+    cd sglang
+
+    # Install SGLang from source (editable for debugging)
+    echo ">>> Installing SGLang base (this takes a while)..."
+    pip install -e "python[all]" --no-build-isolation
+
+    # =========================================================================
+    # sgl-kernel: keep prebuilt version for now
+    # The prebuilt wheel has sm100 kernels which won't load on GH200 (sm_90),
+    # but SGLang will fall back to triton backends at runtime.
+    # Building from source OOMs during CUTLASS compilation (~242 GB RSS).
+    # TODO: revisit if triton fallbacks are insufficient for DeepSeek V3.2
+    # =========================================================================
+    echo ">>> Keeping prebuilt sgl-kernel (will use triton fallback on GH200)"
+
+    # =========================================================================
+    # Additional dependencies
+    # =========================================================================
+    pip install transformers accelerate datasets sentencepiece protobuf
+
+    # Fix cv2/typing shadowing stdlib typing module (same as vLLM)
+    echo ">>> Fixing cv2/typing shadow..."
+    rm -rf /usr/local/lib/python3.12/dist-packages/cv2/typing 2>/dev/null || true
+
+    # =========================================================================
+    # Verify installations
+    # =========================================================================
+    echo ">>> Verifying installation..."
+    python -c "import sglang; print('SGLang: OK')"
+    python -c "import flashinfer; print('FlashInfer: OK')" || echo "FlashInfer: FAILED"
+    python -c "import sgl_kernel; print('sgl-kernel: OK')" || echo "sgl-kernel: FAILED"
+
+    echo ">>> Checking compiled CUDA architectures..."
+    python -c "
+import torch
+print(f'PyTorch CUDA: {torch.version.cuda}')
+print(f'CUDA available: {torch.cuda.is_available()}')
+try:
+    import flashinfer
+    print('FlashInfer loaded successfully')
+except Exception as e:
+    print(f'FlashInfer load error: {e}')
+"
+
+    # Clean up build artifacts to reduce image size
+    pip cache purge
+    rm -rf /root/.cache
+    rm -rf /opt/sglang/sgl-kernel/build
+
+%environment
+    export LC_ALL=C
+    export PATH=/opt/sglang:$PATH
+    export TORCH_CUDA_ARCH_LIST="9.0"
+    # Slingshot NCCL support
+    export LD_LIBRARY_PATH=/opt/aws-ofi-nccl/lib:/opt/cray/libfabric/1.22.0/lib64:/usr/lib64:$LD_LIBRARY_PATH
+    export NCCL_NET="AWS Libfabric"
+    export FI_CXI_DISABLE_HOST_REGISTER=1
+    export FI_MR_CACHE_MONITOR=userfaultfd
+    # CXI tuning for async workloads
+    export FI_CXI_RDZV_PROTO=alt_read
+    export FI_CXI_RDZV_GET_MIN=0
+    export FI_CXI_RX_MATCH_MODE=software
+    # Fix NCCL cuMem allocator conflict
+    export NCCL_CUMEM_ENABLE=0
+
+%runscript
+    exec python -m sglang.launch_server "$@"
+
+%test
+    python -c "import sglang; print('SGLang OK')"

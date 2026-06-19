@@ -1,0 +1,403 @@
+# vLLM layer: builds on base-pytorch image
+# Extends from the base PyTorch image, but heavily based on the vLLM dockerfile.
+# https://github.com/vllm-project/vllm/blob/main/docker/Dockerfile
+# We don't use their docker file as a base directly as it forces an old Ubuntu 
+# version that won't play nicely with Singularity + Isambard.
+#
+# Build args (from sifter.yaml):
+#   VLLM_VERSION: Git tag (e.g., "v0.14.0") or branch (e.g., "main")
+#   VLLM_COMMIT: Optional specific commit hash for nightly builds
+#   TRANSFORMERS_OVERRIDE: Version spec to override transformers (e.g., ">=4.52.0")
+#   VLLM_LENS_VERSION: vllm-lens PyPI version (if set, installs plugin)
+#   FLASHINFER_VERSION: FlashInfer version for pre-compiled kernels (requires CUDA >= 12.8)
+#   VLLM_PATCHES: Space-separated patch filenames from definitions/vllm/patches/
+
+Bootstrap: localimage
+From: {{ BASE_IMAGE }}
+
+%arguments
+    # Custom
+    VLLM_VERSION=
+    VLLM_COMMIT=none
+    VLLM_PATCHES=none
+    VLLM_LENS_VERSION=none
+    TRANSFORMERS_OVERRIDE=
+    INSTALL_KV_CONNECTORS=false
+    # Pin vLLM's model runner ("0" forces the v1 runner). vllm-lens is not yet
+    # compatible with the v2 model runner, so lens builds set this to "0" in
+    # sifter.yaml. "none" leaves vLLM's own default (no env var set).
+    VLLM_USE_V2_MODEL_RUNNER=none
+
+    # Inherited (defaults track upstream vLLM Dockerfile)
+    FLASHINFER_VERSION=0.6.12
+    DEEPEP_COMMIT=73b6ea4
+    BITSANDBYTES_VERSION=0.42.0
+    TIMM_VERSION=>=1.0.17
+    RUNAI_MODEL_STREAMER_VERSION=>=0.15.7
+
+%labels
+    Author Isambard User
+    vLLM {{ VLLM_VERSION }}
+    Description vLLM {{ VLLM_VERSION }} built on PyTorch base
+%setup
+    # Copy patches into container (SINGULARITY_DEFFILE points to this .def file)
+    PATCHES_DIR="$(dirname "$SINGULARITY_DEFFILE")/patches"
+    if [ -d "$PATCHES_DIR" ] && ls "$PATCHES_DIR"/*.patch >/dev/null 2>&1; then
+        echo ">>> Copying patches from $PATCHES_DIR..."
+        mkdir -p "${SINGULARITY_ROOTFS}/opt/vllm-patches"
+        cp "$PATCHES_DIR"/*.patch "${SINGULARITY_ROOTFS}/opt/vllm-patches/"
+    fi
+
+    # Copy NVSHMEM from NVHPC installation (required for DeepEP)
+    echo "=== Copying NVSHMEM from NVHPC (on host) ==="
+    NVSHMEM_SRC="/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/comm_libs/nvshmem"
+    mkdir -p "${SINGULARITY_ROOTFS}/opt/nvshmem"
+    cp -a "$NVSHMEM_SRC/lib" "${SINGULARITY_ROOTFS}/opt/nvshmem/"
+    cp -a "$NVSHMEM_SRC/include" "${SINGULARITY_ROOTFS}/opt/nvshmem/"
+    echo "    NVSHMEM copied to container at /opt/nvshmem"
+
+%post
+    ### Custom #########################################################
+    # Clone vLLM
+    cd /opt
+    if [ "{{ VLLM_COMMIT }}" != "none" ]; then
+        echo ">>> Cloning vLLM (commit {{ VLLM_COMMIT }})..."
+        git clone https://github.com/vllm-project/vllm.git
+        cd vllm
+        git checkout "{{ VLLM_COMMIT }}"
+    else
+        echo ">>> Cloning vLLM {{ VLLM_VERSION }}..."
+        git clone --depth 1 --branch {{ VLLM_VERSION }} https://github.com/vllm-project/vllm.git
+        cd vllm
+    fi
+
+    # Ensure all pip/uv installs find PyTorch CUDA wheels (prevents CPU-only upgrades)
+    CUDA_VERSION_NODOT=$(python3 -c "import torch; print(torch.version.cuda.replace('.',''))")
+    export PIP_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cu${CUDA_VERSION_NODOT}"
+    export UV_EXTRA_INDEX_URL="$PIP_EXTRA_INDEX_URL"
+
+    # uv environment (matches upstream vLLM Dockerfile defaults)
+    export UV_HTTP_TIMEOUT=500              # some deps are slow to download
+    export UV_INDEX_STRATEGY="unsafe-best-match"
+    export UV_LINK_MODE=copy                # avoids hardlink failures on Lustre/tmp
+
+    # Pin torch from the start so no subsequent uv pip install (build deps,
+    # vllm itself, DeepEP, FlashInfer, ...) can accidentally upgrade or
+    # downgrade it. vllm is appended to this file after the build below.
+    TORCH_VER=$(python3 -c "import torch; print(torch.__version__)")
+    echo "torch==${TORCH_VER}" > /tmp/constraints.txt
+    echo ">>> Initial constraints: torch==${TORCH_VER}"
+
+    # Apply transformers override early via constraints — every uv pip
+    # install -c constraints.txt below (vllm wheel, DeepEP, extras, ...)
+    # then resolves transformers to the override version. Avoids the
+    # "vllm wheel pulls a stale transformers, then we reinstall it later"
+    # ordering issue.
+    if [ -n "{{ TRANSFORMERS_OVERRIDE }}" ]; then
+        echo "transformers{{ TRANSFORMERS_OVERRIDE }}" >> /tmp/constraints.txt
+        echo ">>> Added transformers override to constraints: transformers{{ TRANSFORMERS_OVERRIDE }}"
+    fi
+
+    # rdma-core/librdmacm-dev/libmlx5-1: DeepEP RDMA build deps (not in
+    # upstream — they install only libibverbs-dev). Multimedia/NUMA deps
+    # live in vLLM installation IMAGE below to mirror upstream layout.
+    apt-get update && apt-get install -y --no-install-recommends \
+        rdma-core \
+        librdmacm-dev \
+        libmlx5-1 \
+        && rm -rf /var/lib/apt/lists/*
+
+    # fastsafetensors>=0.2.2 (new in vLLM v0.20) needs pybind11 at build time.
+    # With --no-build-isolation in CSRC below, pip reuses the current env
+    # for transitive source builds, so pre-install pybind11 here.
+    uv pip install --system -c /tmp/constraints.txt pybind11
+
+    ### BASE BUILD IMAGE ###############################################
+    # Already provided by the pytorch base image: software-properties-common,
+    # git, curl, python+dev, uv.
+    # Skipped vs upstream:
+    #   - gcc-10/g++-10 downgrade: Ubuntu 24.04 ships GCC 13, well past the
+    #     pre-GCC-10 bug 92519 the upstream workaround targets.
+    #   - /opt/venv: we use system Python directly (deadsnakes from base).
+    #   - VLLM_ENABLE_CUDA_COMPATIBILITY: not needed on GH200.
+    # unzip: needed by tools/install_protoc.sh for the Rust frontend build below.
+    apt-get update && apt-get install -y --no-install-recommends \
+        ccache \
+        sudo \
+        python3-pip \
+        libibverbs-dev \
+        unzip \
+        && rm -rf /var/lib/apt/lists/*
+
+    ### CSRC BUILD IMAGE ###############################################
+    # Compile vLLM into a wheel. No precompiled wheels for aarch64
+    # (vllm-project/vllm#23350), so we build from source. Build deps
+    # themselves come from prebuilt wheels (cmake/ninja/pybind11 etc.).
+    # Skipped vs upstream:
+    #   - ccache/sccache: build runs once per image.
+    #   - SETUPTOOLS_SCM_PRETEND_VERSION dummy: upstream's CSRC is an
+    #     intermediate stage; we build the final wheel directly.
+    uv pip install --system -c /tmp/constraints.txt -r requirements/build/cuda.txt
+
+    # Apply optional patches BEFORE the wheel build so the patched source
+    # is baked into the artifact (the wheel install in the next section
+    # places .py files in site-packages, beyond the reach of /opt/vllm
+    # patches applied later).
+    VLLM_PATCHES="{{ VLLM_PATCHES }}"
+    if [ "$VLLM_PATCHES" != "none" ]; then
+        for p in $VLLM_PATCHES; do
+            echo ">>> Applying patch: ${p}"
+            patch -p1 < "/opt/vllm-patches/${p}"
+        done
+    fi
+
+    # Build the Rust frontend (vllm-rs), new in vLLM v0.22. Upstream compiles it
+    # in a dedicated Docker stage and drops the binary into the source tree;
+    # setup.py then detects it and ships it as-is, skipping the in-wheel cargo
+    # build. We run their build_rust.sh here to the same effect. Guarded on the
+    # script's presence so older vllm tags (pre-0.22, no Rust frontend) still
+    # build. build_rust.sh installs the toolchain pinned in rust-toolchain.toml;
+    # protoc is pinned via install_protoc.sh (distro protoc is often too old for
+    # the frontend's build.rs). --features native-tls-vendored means no system
+    # OpenSSL is required.
+    if [ -f /opt/vllm/build_rust.sh ]; then
+        echo ">>> Building vllm-rs Rust frontend..."
+        bash /opt/vllm/tools/install_protoc.sh
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+        export PATH="$HOME/.cargo/bin:$PATH"
+        export CARGO_BUILD_JOBS=16   # rustc spawns many procs; cap to avoid RLIMIT_NOFILE
+        # Make the frontend mandatory: setup.py's RustExtension is optional by
+        # default and would silently fall back to the slower Python frontend if
+        # the binary were missing. Fail the build loudly instead.
+        export VLLM_REQUIRE_RUST_FRONTEND=1
+        bash /opt/vllm/build_rust.sh
+    fi
+
+    echo ">>> Building vLLM wheel (this takes a while)..."
+    export TORCH_CUDA_ARCH_LIST="9.0"            # GH200 = Hopper = sm_90 (overrides upstream multi-arch default)
+    export MAX_JOBS=64                            # Parallel compilation jobs (upstream default 2; GH200 has 72 cores)
+    export NVCC_THREADS=8                         # Threads per nvcc process (matches upstream default)
+    export CMAKE_BUILD_TYPE=Release               # Matches upstream CSRC stage
+    export VLLM_TARGET_DEVICE=cuda                # Matches upstream
+    export VLLM_SKIP_PRECOMPILED_VERSION_SUFFIX=1 # Don't append "+precompiled" to version
+    export VLLM_DOCKER_BUILD_CONTEXT=1            # Tells vllm setup.py we're in a docker-style build
+    # DeepGEMM `_C` is built per-Python (no abi3) and bundled into the wheel.
+    # Upstream provisions one venv per Python in `requires-python` via
+    # tools/setup_deepgemm_pythons.sh. We only ship the system interpreter,
+    # so point it at $(which python3) directly. Falls back silently on older
+    # vllm versions that don't read this env var.
+    export DEEPGEMM_PYTHON_INTERPRETERS=$(which python3)
+    python3 setup.py bdist_wheel --dist-dir=dist --py-limited-api=cp38
+
+    ### vLLM installation IMAGE #######################################
+    # Most python/CUDA toolchain setup in upstream's installation stage
+    # is already covered by the pytorch base. What remains: multimedia
+    # + NUMA + NCCL apt deps, flashinfer-jit-cache, gdrcopy, runtime
+    # python deps (bitsandbytes/timm/etc.), wheel install, EP kernels,
+    # flashinfer cubin download.
+
+    # Multimedia, NUMA, and runtime NCCL system deps
+    # libnccl-dev/2 pinned to our CUDA version: vllm's nccl_allocator
+    # needs nccl.h at runtime (vllm-project/vllm/.../pynccl_allocator.py).
+    CUDA_VER_SHORT=$(python3 -c "import torch; print(torch.version.cuda)" | cut -d. -f1,2)
+    apt-get update -y && apt-get install -y --no-install-recommends \
+        ffmpeg libsm6 libxext6 libgl1 \
+        libnuma-dev numactl
+    NCCL_VER=$(apt-cache madison libnccl-dev 2>/dev/null | grep "+cuda${CUDA_VER_SHORT}" | head -1 | awk -F'|' '{gsub(/^ +| +$/, "", $2); print $2}')
+    if [ -n "$NCCL_VER" ]; then
+        apt-get install -y --no-install-recommends --allow-change-held-packages \
+            libnccl-dev=${NCCL_VER} libnccl2=${NCCL_VER}
+    else
+        echo ">>> No matching libnccl-dev for cuda${CUDA_VER_SHORT}; relying on pytorch-bundled NCCL"
+    fi
+    rm -rf /var/lib/apt/lists/*
+
+    # FlashInfer JIT cache (CUDA-version-specific index; CUDA >= 12.8 only)
+    CUDA_MAJOR=$(echo "$CUDA_VER_SHORT" | cut -d. -f1)
+    CUDA_MINOR=$(echo "$CUDA_VER_SHORT" | cut -d. -f2)
+    if [ "$CUDA_MAJOR" -gt 12 ] || { [ "$CUDA_MAJOR" -eq 12 ] && [ "$CUDA_MINOR" -ge 8 ]; }; then
+        CUDA_TAG="cu${CUDA_MAJOR}${CUDA_MINOR}"
+        echo ">>> Installing flashinfer-jit-cache=={{ FLASHINFER_VERSION }} from flashinfer.ai/whl/${CUDA_TAG}"
+        uv pip install --system -c /tmp/constraints.txt "flashinfer-jit-cache=={{ FLASHINFER_VERSION }}" \
+            --extra-index-url "https://flashinfer.ai/whl/${CUDA_TAG}"
+    else
+        echo ">>> Skipping flashinfer-jit-cache (requires CUDA >= 12.8)"
+    fi
+
+    # gdrcopy — NVIDIA publishes Ubuntu24_04 aarch64 debs under CUDA 12.8
+    # (https://developer.download.nvidia.com/compute/redist/gdrcopy/CUDA%2012.8/ubuntu24_04/aarch64/).
+    # Upstream pins CUDA 12.8 even on newer CUDA because no prebuilts exist
+    # for 12.9+ yet — we follow the same pin.
+    echo ">>> Installing gdrcopy..."
+    bash /opt/vllm/tools/install_gdrcopy.sh "Ubuntu24_04" "12.8" "aarch64"
+
+    # Runtime python deps from upstream installation IMAGE
+    uv pip install --system -c /tmp/constraints.txt \
+        accelerate \
+        modelscope \
+        "bitsandbytes>={{ BITSANDBYTES_VERSION }}" \
+        "timm{{ TIMM_VERSION }}" \
+        "runai-model-streamer[s3,gcs,azure]{{ RUNAI_MODEL_STREAMER_VERSION }}"
+
+    # Install the vLLM wheel built in CSRC. Wheel install pulls in the
+    # rest of vllm's runtime deps (transformers, fastapi, flashinfer-python, ...).
+    echo ">>> Installing vLLM wheel..."
+    uv pip install --system -c /tmp/constraints.txt /opt/vllm/dist/vllm-*.whl --verbose
+
+    # Pin vllm in constraints so later installs can't pull a different one.
+    VLLM_VER=$(python3 -c "import vllm; print(vllm.__version__)")
+    echo "vllm==${VLLM_VER}" >> /tmp/constraints.txt
+    echo ">>> Constraints now: $(tr '\n' ' ' < /tmp/constraints.txt)"
+
+    # Pin flashinfer-cubin to match the flashinfer-python version pulled
+    # by the wheel install (avoids "flashinfer-cubin version does not match
+    # flashinfer version" errors at runtime).
+    uv pip install --system -c /tmp/constraints.txt \
+        "flashinfer-python=={{ FLASHINFER_VERSION }}" "flashinfer-cubin=={{ FLASHINFER_VERSION }}"
+
+    # EP kernels (DeepEP) — upstream builds these in a separate EXTENSIONS
+    # stage and installs the wheel here; we build inline against vllm.
+    # https://github.com/deepseek-ai/DeepEP
+    echo ">>> Building DeepEP..."
+    cd /opt
+    git clone https://github.com/deepseek-ai/DeepEP
+    cd DeepEP
+    git checkout "{{ DEEPEP_COMMIT }}"
+    export NVSHMEM_DIR=/opt/nvshmem
+    export TORCH_CUDA_ARCH_LIST="9.0a"  # sm_90a for Hopper wgmma/TMA
+    uv pip install --system -c /tmp/constraints.txt --no-build-isolation -v .
+    cd /opt/vllm
+
+    # Download FlashInfer precompiled cubins AFTER all uv pip installs are
+    # done, so a later install doesn't reinstall flashinfer and orphan the cubins.
+    echo ">>> Downloading FlashInfer cubins..."
+    flashinfer download-cubin || echo ">>> (skipped: flashinfer download-cubin not available in this version)"
+
+    ### OPENAI API SERVER #############################################
+    # Mirrors upstream OPENAI API SERVER stage. Optional KV connectors
+    # (lmcache + nixl) for distributed KV cache. Off by default.
+    # Skipped vs upstream:
+    #   - SageMaker variant: not relevant on HPC.
+    #   - OCI image labels + vllm-{openai,sagemaker} entrypoints: handled
+    #     by Singularity %labels / %runscript above.
+    if [ "{{ INSTALL_KV_CONNECTORS }}" = "true" ]; then
+        echo ">>> Installing KV connectors..."
+        CUDA_MAJOR_KV=$(echo "$CUDA_VER_SHORT" | cut -d. -f1)
+        CUDA_VERSION_DASH=$(echo "$CUDA_VER_SHORT" | tr '.' '-')
+        BUILD_PKGS="libcusparse-dev-${CUDA_VERSION_DASH} libcublas-dev-${CUDA_VERSION_DASH} libcusolver-dev-${CUDA_VERSION_DASH}"
+        # Try precompiled wheels first; fall back to source build with -dev libs.
+        uv pip install --system -c /tmp/constraints.txt -r /opt/vllm/requirements/kv_connectors.txt --no-build \
+            || ( apt-get update -y \
+                 && apt-get install -y --no-install-recommends --allow-change-held-packages ${BUILD_PKGS} \
+                 && uv pip install --system -c /tmp/constraints.txt -r /opt/vllm/requirements/kv_connectors.txt --no-build-isolation \
+                 && apt-get purge -y ${BUILD_PKGS} \
+                 && rm -rf /var/lib/apt/lists/* )
+        # Force-reinstall the CUDA-major-matched nixl wheel to land the right
+        # nixl_ep_cpp.so (vLLM 0.21+ flow). Generic `nixl` from requirements
+        # above may pick a different CUDA build.
+        uv pip install --system --force-reinstall --no-deps "nixl-cu${CUDA_MAJOR_KV}"
+    fi
+
+    ### Custom (post-installation) ####################################
+    # Install DeepGEMM (required for GLM-5-FP8 and other DeepSeek-style FP8 models)
+    echo ">>> Installing DeepGEMM..."
+    bash /opt/vllm/tools/install_deepgemm.sh
+
+    # Pip dependencies not in upstream installation IMAGE
+    uv pip install --system -c /tmp/constraints.txt \
+        "ray[serve]>=2.54.0" \
+        "hf_transfer" \
+        "huggingface_hub>=1.3.0" \
+        "qwen-vl-utils>=0.0.14" \
+        "gpt-oss>=0.0.9" \
+        "librosa>=0.11.0" \
+        "soundfile>=0.13.1" \
+        "scipy>=1.17.1"
+
+    # Install vllm-lens plugin (optional)
+    if [ "{{ VLLM_LENS_VERSION }}" != "none" ]; then
+        echo ">>> Installing vllm-lens {{ VLLM_LENS_VERSION }}..."
+        uv pip install --system -c /tmp/constraints.txt "vllm-lens=={{ VLLM_LENS_VERSION }}"
+    fi
+
+    # Download tiktoken encodings for GPT OSS models
+    # See: https://github.com/vllm-project/vllm/issues/22525#issuecomment-3172271363
+    mkdir -p /opt/tiktoken-encodings
+    curl -sL -o /opt/tiktoken-encodings/o200k_base.tiktoken \
+        https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken
+    curl -sL -o /opt/tiktoken-encodings/cl100k_base.tiktoken \
+        https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
+
+    # Verify
+    echo ">>> Verifying installation..."
+    python3 -c "import torch; import vllm; print(f'PyTorch: {torch.__version__}'); print(f'vLLM: {vllm.__version__}')"
+
+    # Clean up
+    pip cache purge
+    rm -rf /root/.cache
+
+%environment
+    export LC_ALL=C
+    export PATH=/opt/vllm:$PATH
+    export CUDA_HOME=/usr/local/cuda
+    export TORCH_CUDA_ARCH_LIST="9.0"
+    # /usr/local/nvidia/lib64 + /usr/local/cuda/lib64 added per upstream
+    # vLLM Dockerfile (lines 703, 722). HPC-specific paths kept first so
+    # Slingshot/aws-ofi-nccl wins over generic CUDA libs.
+    export LD_LIBRARY_PATH=/opt/nvshmem/lib:/usr/local/cuda/compat:/opt/aws-ofi-nccl/lib:/opt/cray/libfabric/1.22.0/lib64:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/lib64:$LD_LIBRARY_PATH
+
+    # Isambard Slingshot NCCL (matching `module show brics/nccl`)
+    ## NCCL
+    export NCCL_NET="AWS Libfabric"
+    export NCCL_SOCKET_IFNAME=hsn
+    export NCCL_NET_GDR_LEVEL=PHB
+    export NCCL_CROSS_NIC=1
+    export NCCL_MIN_NCHANNELS=4
+    export NCCL_GDRCOPY_ENABLE=1
+    ## Libfabric / CXI
+    export FI_CXI_DISABLE_HOST_REGISTER=1
+    export FI_MR_CACHE_MONITOR=userfaultfd
+    export FI_CXI_DEFAULT_CQ_SIZE=131072
+    export FI_CXI_DEFAULT_TX_SIZE=1024
+    export FI_CXI_DISABLE_NON_INJECT_MSG_IDC=1
+    export FI_HMEM_CUDA_USE_GDRCOPY=1
+    export FI_CXI_RDZV_PROTO=alt_read
+    export FI_CXI_RDZV_THRESHOLD=0
+    export FI_CXI_RDZV_GET_MIN=0
+    export FI_CXI_RDZV_EAGER_SIZE=0
+    ## Ray/async CXI tuning (not from Isambard docs, prevents hangs)
+    export FI_CXI_RX_MATCH_MODE=software
+
+    # Prevent CPU OOM during JIT compilation by limiting parallelism
+    export MAX_JOBS=64
+    export TRITON_PARALLEL_COMPILE_THREADS=64
+
+    # Avoid vLLM warnings
+    export OMP_NUM_THREADS=4 # vLLM downgrades to 1 by default, 4 is plenty
+    export VLLM_ALLREDUCE_USE_SYMM_MEM=0 # Symmetric memory multicast ops are not supported
+    export FI_CXI_DISABLE_CUDA_SYNC_MEMOPS=1 # Not supported, spams logs
+
+    # vllm-lens is not yet compatible with vLLM's v2 model runner, so lens
+    # builds pin the v1 runner via the VLLM_USE_V2_MODEL_RUNNER build arg
+    # (set per-build in sifter.yaml). "none" => leave vLLM's own default.
+    # The arg value is substituted at build time. Remove once vllm-lens
+    # supports the v2 runner.
+    if [ "{{ VLLM_USE_V2_MODEL_RUNNER }}" != "none" ]; then
+        export VLLM_USE_V2_MODEL_RUNNER={{ VLLM_USE_V2_MODEL_RUNNER }}
+    fi
+
+    # Tag this image in vLLM's usage telemetry (matches upstream OPENAI API SERVER)
+    export VLLM_USAGE_SOURCE=production-singularity-image
+
+    # Add tiktoken encodings path for GPT OSS models
+    export TIKTOKEN_ENCODINGS_BASE="/opt/tiktoken-encodings"
+
+%runscript
+    exec python3 "$@"
+
+%test
+    python -c "import vllm; print(f'vLLM {vllm.__version__} OK')"
+    if python -c "import vllm_lens" 2>/dev/null; then
+        python -c "import vllm_lens; print('vllm-lens OK')"
+    fi

@@ -1,0 +1,152 @@
+# TRL training layer: extends vllm or vllm-lens image
+# Adds TRL/PEFT training stack on top of the vLLM base.
+# All kernels (FlashInfer, DeepGEMM, DeepEP), NCCL config, and base packages inherited.
+#
+# Build args (from sifter.yaml):
+#   TRL_EXTRAS: Comma-separated TRL extras (default: peft,deepspeed,liger,quantization,kernels)
+
+Bootstrap: localimage
+From: {{ BASE_IMAGE }}
+
+%arguments
+    TRL_VERSION=0.29.1
+    TRL_EXTRAS=peft,deepspeed,liger,quantization,kernels
+
+%labels
+    Author Isambard User
+    Description TRL/PEFT training stack on vLLM base
+
+%setup
+    # Clone aisi-inspect-tools on the host where SSH keys are available.
+    # The container's fakeroot environment has no SSH access.
+    # -F /dev/null: bypass broken /etc/ssh/ssh_config.d/50-suse.conf on compute nodes
+    # -o StrictHostKeyChecking=no: skip host key check (compute nodes have clean known_hosts)
+    GIT_SSH_COMMAND="ssh -F /dev/null -o StrictHostKeyChecking=no" \
+    git clone --depth=1 \
+        git@github.com:AI-Safety-Institute/aisi-inspect-tools.git \
+        "${SINGULARITY_ROOTFS}/opt/aisi-inspect-tools"
+
+%post
+    # Re-pin vllm, torch, transformers, datasets and trl to prevent accidental downgrades
+    VLLM_VER=$(python3 -c "import vllm; print(vllm.__version__)")
+    TORCH_VER=$(python3 -c "import torch; print(torch.__version__)")
+    TRANSFORMERS_VER=$(python3 -c "import transformers; print(transformers.__version__)")
+    echo "vllm==${VLLM_VER}" > /tmp/constraints.txt
+    echo "torch==${TORCH_VER}" >> /tmp/constraints.txt
+    echo "transformers==${TRANSFORMERS_VER}" >> /tmp/constraints.txt
+    echo "datasets>=4.5.0" >> /tmp/constraints.txt
+    echo "trl=={{ TRL_VERSION }}" >> /tmp/constraints.txt
+
+    # Install TRL training stack
+    # unsloth/rapidfireai are pure-Python (py3-none-any), aarch64-safe
+    pip install -c /tmp/constraints.txt \
+        "trl[{{ TRL_EXTRAS }}]=={{ TRL_VERSION }}" \
+        "datasets>=4.5.0" \
+        "inspect-ai>=0.3.199" \
+        "inspect-evals>=0.3.106" \
+        "openai>=2.29.0" \
+        "typer>=0.9.0" \
+        "wandb"
+
+    # rapidfireai 0.15.2 declares huggingface-hub<1.0.0 in its wheel metadata, but
+    # transformers>=5.x needs huggingface-hub>=1.3.0. Install with --no-deps since the
+    # constraint is stale and all actual runtime deps are already present.
+    pip install -c /tmp/constraints.txt --no-deps "rapidfireai>=0.15.2"
+
+    # unsloth and unsloth_zoo both declare stale constraints (datasets<4.4.0, trl<0.29);
+    # install both with --no-deps to skip those, then add any genuinely missing deps
+    pip install -c /tmp/constraints.txt --no-deps "unsloth[base]"
+    pip install -c /tmp/constraints.txt --no-deps "unsloth_zoo[base]"
+    # cut_cross_entropy, torchao, triton-kernels are unsloth_zoo runtime deps not already present
+    pip install -c /tmp/constraints.txt "cut_cross_entropy" "torchao" "triton-kernels"
+
+    # Install aisi-inspect-tools (cloned in %setup via SSH into /opt to avoid
+    # Apptainer shadowing /tmp between %setup and %post)
+    pip install -c /tmp/constraints.txt /opt/aisi-inspect-tools
+    rm -rf /opt/aisi-inspect-tools
+
+    # Install Flash Attention 2/3 from source (no pre-built wheels for sm_90/aarch64)
+    # ptxas is already patched to 12.8.93 in the base image (fixes nvcc segfault on FA3)
+    export TORCH_CUDA_ARCH_LIST="9.0"
+    export MAX_JOBS=16  # flash-attn compilation is memory-intensive; limit parallelism
+    pip install -c /tmp/constraints.txt --no-build-isolation flash-attn
+
+    # Clean up
+    pip cache purge
+    rm -rf /root/.cache
+
+%environment
+    # NOTE: apptainer overwrites /.singularity.d/env/90-environment.sh with
+    # this block when bootstrapping a child from the vllm base, wiping the
+    # base's exports. The block below mirrors vllm.def's %environment so the
+    # base config (CUDA forward-compat, Slingshot NCCL/CXI, vLLM usage tag,
+    # etc.) is preserved. Keep in sync with definitions/vllm/vllm.def.
+
+    export LC_ALL=C
+    export PATH=/opt/vllm:$PATH
+    export CUDA_HOME=/usr/local/cuda
+    export TORCH_CUDA_ARCH_LIST="9.0"
+    # /usr/local/nvidia/lib64 + /usr/local/cuda/lib64 added per upstream
+    # vLLM Dockerfile (lines 703, 722). HPC-specific paths kept first so
+    # Slingshot/aws-ofi-nccl wins over generic CUDA libs.
+    export LD_LIBRARY_PATH=/opt/nvshmem/lib:/usr/local/cuda/compat:/opt/aws-ofi-nccl/lib:/opt/cray/libfabric/1.22.0/lib64:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/lib64:$LD_LIBRARY_PATH
+
+    # Isambard Slingshot NCCL (matching `module show brics/nccl`)
+    ## NCCL
+    export NCCL_NET="AWS Libfabric"
+    export NCCL_SOCKET_IFNAME=hsn
+    export NCCL_NET_GDR_LEVEL=PHB
+    export NCCL_CROSS_NIC=1
+    export NCCL_MIN_NCHANNELS=4
+    export NCCL_GDRCOPY_ENABLE=1
+    ## Libfabric / CXI
+    export FI_CXI_DISABLE_HOST_REGISTER=1
+    export FI_MR_CACHE_MONITOR=userfaultfd
+    export FI_CXI_DEFAULT_CQ_SIZE=131072
+    export FI_CXI_DEFAULT_TX_SIZE=1024
+    export FI_CXI_DISABLE_NON_INJECT_MSG_IDC=1
+    export FI_HMEM_CUDA_USE_GDRCOPY=1
+    export FI_CXI_RDZV_PROTO=alt_read
+    export FI_CXI_RDZV_THRESHOLD=0
+    export FI_CXI_RDZV_GET_MIN=0
+    export FI_CXI_RDZV_EAGER_SIZE=0
+    ## Ray/async CXI tuning (not from Isambard docs, prevents hangs)
+    export FI_CXI_RX_MATCH_MODE=software
+
+    # Prevent CPU OOM during JIT compilation by limiting parallelism
+    export MAX_JOBS=64
+    export TRITON_PARALLEL_COMPILE_THREADS=64
+
+    # Avoid vLLM warnings
+    export OMP_NUM_THREADS=4 # vLLM downgrades to 1 by default, 4 is plenty
+    export VLLM_ALLREDUCE_USE_SYMM_MEM=0 # Symmetric memory multicast ops are not supported
+    export FI_CXI_DISABLE_CUDA_SYNC_MEMOPS=1 # Not supported, spams logs
+
+    # Tag this image in vLLM's usage telemetry (matches upstream OPENAI API SERVER)
+    export VLLM_USAGE_SOURCE=production-singularity-image
+
+    # Add tiktoken encodings path for GPT OSS models
+    export TIKTOKEN_ENCODINGS_BASE="/opt/tiktoken-encodings"
+
+    # rapidfireai creates its log dir at import time; redirect so it's
+    # always writable in the container.
+    export RF_LOG_PATH=${RF_LOG_PATH:-${SCRATCH:-/tmp}/rapidfireai/logs}
+
+%runscript
+    exec python3 "$@"
+
+%test
+    python3 -c "import trl; print('TRL training stack OK')"
+    python3 -c "import unsloth; print('unsloth OK')"
+    python3 -c "import rapidfireai; print('rapidfireai OK')"
+    python3 -c "import peft; print('peft OK')"
+    python3 -c "import deepspeed; print('deepspeed OK')"
+    python3 -c "import liger_kernel; print('liger_kernel OK')"
+    python3 -c "import bitsandbytes; print('bitsandbytes OK')"
+    python3 -c "import datasets; print('datasets OK')"
+    python3 -c "import inspect_ai; print('inspect-ai OK')"
+    python3 -c "import inspect_evals; print('inspect-evals OK')"
+    python3 -c "import openai; print('openai OK')"
+    python3 -c "import typer; print('typer OK')"
+    python3 -c "import flash_attn; print('flash-attn OK')"
+    python3 -c "import triton_kernels; print('triton-kernels OK')"

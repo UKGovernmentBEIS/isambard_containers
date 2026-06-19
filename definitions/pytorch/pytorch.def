@@ -1,0 +1,234 @@
+# Base layer: CUDA + PyTorch for Isambard GH200
+#
+# Build args (from sifter.yaml):
+#   PYTORCH_VERSION: PyTorch version (default: 2.9.1)
+#   CUDA_VERSION: CUDA version (default: 12.6)
+#   CUDA_IMAGE: Full Docker image tag (default: nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04)
+#   PYTHON_VERSION: Python version installed via deadsnakes PPA (default: 3.12)
+#
+# CUDA forward compatibility: NGC CUDA images with 12.x work on Isambard
+# even though the kernel driver reports CUDA 12.6 (driver 565.57.01).
+# For cu13+ userspace, /usr/local/cuda/compat (shipped in the -devel NGC
+# images) must be on LD_LIBRARY_PATH at runtime — see %environment below.
+#
+# Includes:
+# - ptxas 12.8.93 patch for CUDA <12.8 (fixes Flash Attention 3 compile segfault)
+# - aws-ofi-nccl plugin for native Slingshot NCCL support
+#
+# Runtime requires bind-mounting host libraries:
+#   --bind /opt/cray/libfabric/1.22.0:/opt/cray/libfabric/1.22.0
+#   --bind /usr/lib64:/usr/lib64:ro
+#   --bind /lib64:/lib64:ro
+
+Bootstrap: docker
+From: {{ CUDA_IMAGE }}
+
+%arguments
+    PYTORCH_VERSION=2.9.1
+    CUDA_VERSION=12.6
+    CUDA_IMAGE=nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
+    PYTHON_VERSION=3.12
+
+%labels
+    Author Isambard User
+    CUDA {{ CUDA_VERSION }}
+    PyTorch {{ PYTORCH_VERSION }}
+    Description Base image with CUDA {{ CUDA_VERSION }} + PyTorch {{ PYTORCH_VERSION }} for GH200
+
+%setup
+    # Build aws-ofi-nccl on host and copy into container
+    # (%setup runs on host where C++ toolchain works correctly)
+    AWS_OFI_NCCL_VERSION="1.8.1-aws"
+    LIBFABRIC_ROOT="/opt/cray/libfabric/1.22.0"
+    CUDA_ROOT="/opt/nvidia/hpc_sdk/Linux_aarch64/24.11/cuda/12.6"
+    BUILD_TMP="/tmp/aws-ofi-nccl-build-$$"
+
+    echo "=== Building aws-ofi-nccl ${AWS_OFI_NCCL_VERSION} (on host) ==="
+    mkdir -p "$BUILD_TMP"
+    cd "$BUILD_TMP"
+
+    curl -sLO "https://github.com/aws/aws-ofi-nccl/releases/download/v${AWS_OFI_NCCL_VERSION}/aws-ofi-nccl-${AWS_OFI_NCCL_VERSION}.tar.gz"
+    tar --no-same-owner -xzf "aws-ofi-nccl-${AWS_OFI_NCCL_VERSION}.tar.gz"
+    cd "aws-ofi-nccl-${AWS_OFI_NCCL_VERSION}"
+
+    # GCC 14+ has stricter defaults that break old autoconf scripts
+    # These flags restore compatibility with both old and new GCC
+    export CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=implicit-int"
+
+    ./configure \
+        --prefix="${SINGULARITY_ROOTFS}/opt/aws-ofi-nccl" \
+        --with-libfabric="$LIBFABRIC_ROOT" \
+        --with-cuda="$CUDA_ROOT" \
+        --disable-tests
+
+    make -j$(nproc)
+    make install
+
+    echo "aws-ofi-nccl installed to container at /opt/aws-ofi-nccl"
+    ls -la "${SINGULARITY_ROOTFS}/opt/aws-ofi-nccl/lib/"
+
+    # Clean up
+    cd /
+    rm -rf "$BUILD_TMP"
+
+%post
+    PYTORCH_VERSION="{{ PYTORCH_VERSION }}"
+    CUDA_VERSION="{{ CUDA_VERSION }}"
+    PYTHON_VERSION="{{ PYTHON_VERSION }}"
+
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Tools needed to add the deadsnakes PPA and fetch uv
+    apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common \
+        gpg-agent \
+        ca-certificates \
+        curl
+
+    # deadsnakes PPA - provides multiple Python versions on Ubuntu
+    add-apt-repository -y ppa:deadsnakes/ppa
+    apt-get update
+
+    # Install Python ${PYTHON_VERSION} from deadsnakes + system build deps
+    apt-get install -y --no-install-recommends \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-dev \
+        python${PYTHON_VERSION}-venv \
+        git \
+        wget \
+        build-essential \
+        ninja-build \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Remove PEP 668 marker (safe in containers)
+    rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED
+
+    # Set chosen Python as default python/python3
+    update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
+
+    # Install uv (fast Python package installer) - download release tarball directly
+    UV_VERSION="0.5.11"
+    UV_ARCH="aarch64"
+    cd /tmp
+    curl -sSLO "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${UV_ARCH}-unknown-linux-gnu.tar.gz"
+    tar -xzf "uv-${UV_ARCH}-unknown-linux-gnu.tar.gz"
+    install -m 0755 "uv-${UV_ARCH}-unknown-linux-gnu/uv" /usr/local/bin/uv
+    [ -f "uv-${UV_ARCH}-unknown-linux-gnu/uvx" ] && install -m 0755 "uv-${UV_ARCH}-unknown-linux-gnu/uvx" /usr/local/bin/uvx
+    rm -rf "uv-${UV_ARCH}-unknown-linux-gnu"*
+    uv --version
+
+    # =========================================================================
+    # Patch ptxas to 12.8.93 (fixes nvcc segfault compiling Flash Attention 3)
+    # Only needed for CUDA < 12.8 (12.9+ already has a fixed ptxas)
+    # See: https://github.com/vllm-project/vllm/pull/19095
+    #      https://github.com/Dao-AILab/flash-attention/issues/1453
+    # =========================================================================
+    PTXAS_CURRENT=$(ptxas --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' || echo "0.0")
+    PTXAS_MAJOR=$(echo "$PTXAS_CURRENT" | cut -d. -f1)
+    PTXAS_MINOR=$(echo "$PTXAS_CURRENT" | cut -d. -f2)
+    if [ "$PTXAS_MAJOR" -lt 12 ] || ([ "$PTXAS_MAJOR" -eq 12 ] && [ "$PTXAS_MINOR" -lt 8 ]); then
+        echo ">>> Patching ptxas from $PTXAS_CURRENT to 12.8.93..."
+        PTXAS_VERSION="12.8.93"
+        ARCH="aarch64"
+        cd /tmp
+        curl -sLO "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/linux-${ARCH}/cuda_nvcc-linux-${ARCH}-${PTXAS_VERSION}-archive.tar.xz"
+        tar -xf cuda_nvcc-linux-${ARCH}-${PTXAS_VERSION}-archive.tar.xz
+        mv /usr/local/cuda/bin/ptxas "/usr/local/cuda/bin/ptxas.${PTXAS_CURRENT}.backup"
+        cp cuda_nvcc-linux-${ARCH}-${PTXAS_VERSION}-archive/bin/ptxas /usr/local/cuda/bin/ptxas
+        rm -rf cuda_nvcc-linux-${ARCH}-${PTXAS_VERSION}-archive*
+    else
+        echo ">>> ptxas $PTXAS_CURRENT >= 12.8, no patch needed"
+    fi
+    echo "    ptxas version: $(ptxas --version | head -4 | tail -1)"
+    echo "    cicc version: $(/usr/local/cuda/nvvm/bin/cicc --version 2>&1 | head -1)"
+
+    # Verify aws-ofi-nccl was copied from host
+    echo ">>> Checking aws-ofi-nccl..."
+    if [ -f /opt/aws-ofi-nccl/lib/libnccl-net.so ]; then
+        echo "    aws-ofi-nccl: OK"
+        ls -la /opt/aws-ofi-nccl/lib/
+    else
+        echo "    WARNING: aws-ofi-nccl not found - Slingshot support disabled"
+    fi
+
+    # Install PyTorch with CUDA via uv
+    # Take only major.minor of CUDA_VERSION and strip dots (e.g. 13.0.2 -> 130)
+    CUDA_VERSION_NODOT=$(echo "$CUDA_VERSION" | cut -d. -f1,2 | tr -d '.')
+    echo ">>> Installing PyTorch ${PYTORCH_VERSION}+cu${CUDA_VERSION_NODOT}..."
+    uv pip install --system --python /usr/bin/python${PYTHON_VERSION} \
+        torch==${PYTORCH_VERSION} torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu${CUDA_VERSION_NODOT}
+
+    # Verify
+    python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.version.cuda}')"
+
+    # Clean up
+    uv cache clean
+    apt-get clean
+
+%environment
+    export LC_ALL=C
+    # /usr/local/cuda/compat ships a forward-compat libcuda.so that lets cu13+
+    # userspace run on Isambard's driver 565.57.01 (which advertises CUDA 12.7).
+    # No-op on cu126/cu129 — the compat libs are a superset and the dynamic
+    # linker keeps using the host driver when it's already new enough.
+    # Slingshot NCCL support via aws-ofi-nccl plugin appended after.
+    export LD_LIBRARY_PATH=/usr/local/cuda/compat:/opt/aws-ofi-nccl/lib:/opt/cray/libfabric/1.22.0/lib64:/usr/lib64:$LD_LIBRARY_PATH
+    # NCCL environment for Slingshot
+    export NCCL_NET="AWS Libfabric"
+    export FI_CXI_DISABLE_HOST_REGISTER=1
+    export FI_MR_CACHE_MONITOR=userfaultfd
+    # CXI tuning for Ray/async workloads (prevents hangs)
+    export FI_CXI_RDZV_PROTO=alt_read
+    export FI_CXI_RDZV_GET_MIN=0
+    export FI_CXI_RX_MATCH_MODE=software
+
+%runscript
+    python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.version.cuda}')"
+
+%test
+    echo "=== Base Image Tests ==="
+
+    # Test 1: PyTorch imports
+    echo "--- Test 1: PyTorch Import ---"
+    python -c "import torch; print(f'PyTorch {torch.__version__} OK')"
+
+    # Test 2: aws-ofi-nccl plugin exists
+    echo "--- Test 2: aws-ofi-nccl Plugin ---"
+    if [ -f /opt/aws-ofi-nccl/lib/libnccl-net.so ]; then
+        echo "libnccl-net.so: FOUND"
+    else
+        echo "ERROR: libnccl-net.so not found"
+        exit 1
+    fi
+
+    # Test 3: ptxas version (should be >= 12.8 — accepts 12.8+, 13+, 14+, ...)
+    echo "--- Test 3: ptxas Version ---"
+    ptxas --version | grep -E "release (12\.([89]|[1-9][0-9])|(1[3-9]|[2-9][0-9])\.)" && echo "ptxas: OK" || { echo "ERROR: ptxas too old"; exit 1; }
+
+    # Test 4: CUDA tests (only if GPU available via --nv)
+    echo "--- Test 4: CUDA (requires --nv) ---"
+    python -c "
+import torch
+if torch.cuda.is_available():
+    print(f'CUDA available: {torch.cuda.get_device_name(0)}')
+    # Quick GPU test
+    x = torch.randn(100, 100, device='cuda')
+    y = torch.matmul(x, x)
+    print('GPU matmul: OK')
+
+    # Test NCCL can initialize (single process)
+    import os
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '29500'
+    os.environ['RANK'] = '0'
+    os.environ['WORLD_SIZE'] = '1'
+    torch.distributed.init_process_group('nccl')
+    print('NCCL init: OK')
+    torch.distributed.destroy_process_group()
+else:
+    print('No GPU - skipping CUDA tests (run with: singularity test --nv image.sif)')
+"
+
+    echo "=== All Tests Passed ==="

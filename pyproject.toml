@@ -1,0 +1,62 @@
+[project]
+    dependencies=[
+        "python-dotenv==1.2.2",
+        "pyyaml==6.0.3",
+        "rich==15.0.0",
+        "sifter==0.2.0",
+        "typer==0.26.7",
+    ]
+    description="Isambard HPC container management utilities"
+    license="MIT"
+    license-files=["LICENSE"]
+    name="isambard-container-tools"
+    requires-python=">=3.12,<3.14"
+    version="0.1.0"
+
+    [project.urls]
+        Repository="https://github.com/AI-Safety-Institute/hpc-containers"
+
+    [project.optional-dependencies]
+        download=["datasets==5.0.0", "huggingface_hub==1.16.1"]
+
+    [project.scripts]
+        benchmark-networking="isambard_container_tools.benchmarks.run_benchmark:app"
+        vllm-local="isambard_container_tools.engines.vllm.serve_local:app"
+        vllm-serve="isambard_container_tools.engines.vllm.serve:app"
+
+[build-system]
+    build-backend="setuptools.build_meta"
+    requires=["setuptools>=77.0"]
+
+[tool.setuptools.packages.find]
+    include=["isambard_container_tools*"]
+    where=["src"]
+
+[tool.setuptools.package-data]
+    "isambard_container_tools.benchmarks"=["benchmark_allreduce.py"]
+    "isambard_container_tools.engines.vllm"=["model_recipes.yaml"]
+    "isambard_container_tools.templates"=["**/*.slurm"]
+
+[tool.uv]
+    environments=["sys_platform == 'linux'"]
+    [tool.uv.sources]
+        sifter=[{git="https://github.com/UKGovernmentBEIS/sifter.git"}]
+        torch=[{index="pytorch-cu126", marker="sys_platform == 'linux'"}]
+
+[dependency-groups]
+    dev=[
+        "inspect-ai==0.3.240",
+        "openai==2.43.0",
+        "pyright==1.1.410",
+        "pytest==9.1.1",
+        "ruff==0.15.18",
+        "vllm-lens==1.1.0",
+    ]
+
+[tool.pytest.ini_options]
+    filterwarnings=["ignore::DeprecationWarning:importlib._bootstrap"]
+
+[tool.pyright]
+    include=["src/isambard_container_tools"]
+    reportMissingModuleSource=false
+    reportMissingTypeStubs=false

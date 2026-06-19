@@ -1,0 +1,25 @@
+# Built containers
+dist/
+*.sif
+
+# Build logs and Slurm output
+logs/
+*.log
+slurm-*.out
+
+# Editor
+.vscode/
+*.swp
+*~
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Singularity build artifacts
+*.sandbox/
+
+.env

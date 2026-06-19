@@ -1,0 +1,1142 @@
+# vLLM model recipes for Isambard (assumed 4 H200s per node).
+# Source: https://docs.vllm.ai/projects/recipes/en/latest/index.html
+#
+# Each model can specify:
+#   vllm_args:  CLI args passed to `vllm serve` (maps to EngineArgs)
+#   env:        Environment variables exported into the container
+#   base:       Inherit vllm_args and env from another recipe
+#
+# Note speculative decoding is always skipped.
+
+# =============================================================================
+# DeepSeek models
+# =============================================================================
+
+_deepseek_base:
+  vllm_args:
+    enable_expert_parallel: true
+
+# DeepSeek-R1 (DeepSeek-V3)
+deepseek-ai/DeepSeek-R1-0528:
+  base: _deepseek_base
+  vllm_args:
+    trust_remote_code: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+    reasoning_parser: deepseek_r1
+
+nvidia/DeepSeek-R1-FP4:
+  base: deepseek-ai/DeepSeek-R1-0528
+  vllm_args:
+    pipeline_parallel_size: 1
+
+# DeepSeek-V3.1
+deepseek-ai/DeepSeek-V3.1:
+  base: _deepseek_base
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 2
+    enable_auto_tool_choice: true
+    tool_call_parser: deepseek_v31
+    default_chat_template_kwargs: '{"thinking": true}'
+
+# DeepSeek-V3.2
+deepseek-ai/DeepSeek-V3.2:
+  base: _deepseek_base
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+    tokenizer_mode: deepseek_v32
+    tool_call_parser: deepseek_v32
+    enable_auto_tool_choice: true
+    reasoning_parser: deepseek_v3
+    trust_remote_code: true
+    default_chat_template_kwargs: '{"thinking": true}'
+    max_num_batched_tokens: 8192
+
+# DeepSeek-V3.2-NVFP4 (4-bit quantized)
+# NVFP4 checkpoints auto-set kv_cache_dtype=fp8_e4m3, but no MLA backend
+# supports fp8 KV cache + sparse attention together. Override to auto (bf16)
+# so the MLA sparse backend can be used.
+nvidia/DeepSeek-V3.2-NVFP4:
+  base: deepseek-ai/DeepSeek-V3.2
+  vllm_args:
+    pipeline_parallel_size: 2
+    tensor_parallel_size: 4
+    kv_cache_dtype: auto
+
+# DeepSeek-V3.2-Exp (recommended: EP/DP mode)
+deepseek-ai/DeepSeek-V3.2-Exp:
+  base: deepseek-ai/DeepSeek-V3.2
+  vllm_args:
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    tool_call_parser: deepseek_v3
+
+# DeepSeek-V4-Pro (1.6T total / 49B active, FP4+FP8 mixed checkpoint).
+# Requires vLLM >= 0.20.0. Reasoning is toggled via chat_template_kwargs
+# (thinking, reasoning_effort = "high" | "max"). Mirrors upstream's serve
+# command except for PP=4 (upstream uses TP=16 across 2 H200 nodes; we
+# fan out via PP across 4 GH200 nodes) and gpu_memory_utilization left
+# at vLLM's default.
+deepseek-ai/DeepSeek-V4-Pro:
+  base: _deepseek_base
+  vllm_args:
+    trust_remote_code: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 5
+    kv_cache_dtype: fp8
+    block_size: 256
+    tokenizer_mode: deepseek_v4
+    tool_call_parser: deepseek_v4
+    reasoning_parser: deepseek_v4
+    enable_auto_tool_choice: true
+    # gpu_memory_utilization: 0.95
+    max_model_len: 800000
+    max_num_seqs: 512
+    max_num_batched_tokens: 512
+    no_enable_flashinfer_autotune: true
+    compilation_config: '{"mode": 0, "cudagraph_mode": "FULL_DECODE_ONLY", "pass_config": {"fuse_allreduce_rms": false}}'
+    default_chat_template_kwargs: '{"thinking": true}'
+
+deepseek-ai/DeepSeek-V4-Flash:
+  base: deepseek-ai/DeepSeek-V4-Pro
+  vllm_args:
+    pipeline_parallel_size: 1
+
+# DeepSeek-OCR
+deepseek-ai/DeepSeek-OCR:
+  vllm_args:
+    logits_processors: "vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor"
+    mm_processor_cache_gb: 0
+    skip_special_tokens: false
+
+# =============================================================================
+# Ernie models
+# =============================================================================
+
+_ernie_base:
+  vllm_args:
+    enable_expert_parallel: true
+
+# Ernie4.5
+baidu/ERNIE-4.5-21B-A3B-PT:
+  base: _ernie_base
+  vllm_args:
+    tensor_parallel_size: 1
+
+baidu/ERNIE-4.5-300B-A47B-PT:
+  base: _ernie_base
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 2
+    quantization: fp8
+
+# Ernie4.5-VL
+baidu/ERNIE-4.5-VL-28B-A3B-PT:
+  base: _ernie_base
+  vllm_args:
+    trust_remote_code: true
+
+baidu/ERNIE-4.5-VL-424B-A47B-PT:
+  base: baidu/ERNIE-4.5-VL-28B-A3B-PT
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 2
+
+# =============================================================================
+# GLM models
+# =============================================================================
+
+_glm_base:
+  vllm_args:
+    tool_call_parser: glm45
+    reasoning_parser: glm45
+    enable_auto_tool_choice: true
+    trust_remote_code: true
+
+# GLM-4.X series
+zai-org/GLM-4.5-Air:
+  base: _glm_base
+  vllm_args:
+    enable_expert_parallel: true
+    tensor_parallel_size: 4
+
+zai-org/GLM-4.5-Air-FP8:
+  base: zai-org/GLM-4.5-Air
+
+zai-org/GLM-4.5:
+  base: _glm_base
+  vllm_args:
+    enable_expert_parallel: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+
+zai-org/GLM-4.5-FP8:
+  base: zai-org/GLM-4.5
+  vllm_args:
+    pipeline_parallel_size: 2
+
+zai-org/GLM-4.6:
+  base: _glm_base
+  vllm_args:
+    tensor_parallel_size: 4
+
+zai-org/GLM-4.7:
+  base: _glm_base
+  vllm_args:
+    enable_expert_parallel: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 3
+    max_num_batched_tokens: 8192
+
+zai-org/GLM-4.7-FP8:
+  base: zai-org/GLM-4.7
+
+zai-org/GLM-4.7-Flash:
+  base: zai-org/GLM-4.7
+  vllm_args:
+    pipeline_parallel_size: 1
+
+# GLM-5 (DeepSeek MoE+MLA architecture)
+zai-org/GLM-5-FP8:
+  base: _glm_base
+  vllm_args:
+    enable_expert_parallel: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 5
+    max_num_batched_tokens: 8192
+    tool_call_parser: glm47
+
+zai-org/GLM-5:
+  base: zai-org/GLM-5-FP8
+  vllm_args:
+    pipeline_parallel_size: 10
+
+zai-org/GLM-5.1-FP8:
+  base: zai-org/GLM-5-FP8
+
+zai-org/GLM-5.1:
+  base: zai-org/GLM-5
+
+zai-org/GLM-5.2-FP8:
+  base: zai-org/GLM-5.1-FP8
+
+zai-org/GLM-5.2:
+  base: zai-org/GLM-5.1
+
+# GLM-ASR
+zai-org/GLM-ASR-Nano-2512: {}
+
+# GLM-Image (vllm-omni)
+zai-org/GLM-Image: {}
+
+# GLM-OCR
+zai-org/GLM-OCR: {}
+
+# GLM-V (Vision)
+zai-org/GLM-4.5V:
+  base: _glm_base
+  vllm_args:
+    enable_expert_parallel: true
+    tensor_parallel_size: 4
+    mm_encoder_tp_mode: data
+    mm_processor_cache_type: shm
+    max_model_len: 65536
+    max_num_batched_tokens: 32768
+
+zai-org/GLM-4.5V-FP8:
+  base: zai-org/GLM-4.5V
+
+# Glyph (reasoning multimodal OCR)
+zai-org/Glyph:
+  vllm_args:
+    mm_processor_cache_gb: 0
+    reasoning_parser: glm45
+    limit_mm_per_prompt_video: 0
+
+# =============================================================================
+# Gemma models
+# =============================================================================
+
+google/gemma-2-9b-it:
+  vllm_args:
+    tensor_parallel_size: 1
+
+google/gemma-3-4b-it:
+  vllm_args:
+    tensor_parallel_size: 1
+
+RedHatAI/gemma-3-4b-it-FP8-dynamic:
+  base: google/gemma-3-4b-it
+
+google/gemma-3-12b-it:
+  vllm_args:
+    tensor_parallel_size: 1
+
+RedHatAI/gemma-3-12b-it-FP8-dynamic:
+  base: google/gemma-3-12b-it
+
+google/gemma-3-27b-it:
+  vllm_args:
+    tensor_parallel_size: 2
+
+RedHatAI/gemma-3-27b-it-FP8-dynamic:
+  base: google/gemma-3-27b-it
+  vllm_args:
+    tensor_parallel_size: 1
+
+# Gemma 4
+_gemma4_base:
+  vllm_args:
+    tool_call_parser: gemma4
+    reasoning_parser: gemma4
+    enable_auto_tool_choice: true
+    default_chat_template_kwargs: '{"enable_thinking": true}'
+
+google/gemma-4-E2B-it:
+  base: _gemma4_base
+  vllm_args:
+    tensor_parallel_size: 1
+
+google/gemma-4-E4B-it:
+  base: _gemma4_base
+  vllm_args:
+    tensor_parallel_size: 1
+
+google/gemma-4-26B-A4B-it:
+  base: _gemma4_base
+  vllm_args:
+    tensor_parallel_size: 1
+
+google/gemma-4-31B-it:
+  base: _gemma4_base
+  vllm_args:
+    tensor_parallel_size: 2
+
+google/translategemma-27b-it:
+  vllm_args:
+    tensor_parallel_size: 2
+
+google/translategemma-4b-it:
+  vllm_args:
+    tensor_parallel_size: 1
+
+# =============================================================================
+# InternLM models
+# =============================================================================
+
+# Intern-S1
+internlm/Intern-S1-20B-Instruct:
+  vllm_args:
+    trust_remote_code: true
+    tensor_parallel_size: 4
+    enable_auto_tool_choice: true
+    tool_call_parser: internlm
+    reasoning_parser: deepseek_r1
+
+# =============================================================================
+# InternVL models
+# =============================================================================
+
+OpenGVLab/InternVL3_5-8B:
+  vllm_args:
+    trust_remote_code: true
+
+# =============================================================================
+# inclusionAI models
+# =============================================================================
+
+inclusionAI/Ring-1T-FP8:
+  vllm_args:
+    trust_remote_code: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 5
+    kv_cache_dtype: fp8
+
+inclusionAI/Ring-2.5-1T:
+  base: inclusionAI/Ring-1T-FP8
+  vllm_args:
+    kv_cache_dtype: auto
+    pipeline_parallel_size: 10
+
+inclusionAI/Ring-2.6-1T:
+  base: inclusionAI/Ring-2.5-1T
+
+# =============================================================================
+# Jina models
+# =============================================================================
+
+jinaai/jina-reranker-m0:
+  vllm_args:
+    tensor_parallel_size: 2
+
+# =============================================================================
+# Llama models
+# =============================================================================
+
+# Llama 3.1
+meta-llama/Llama-3.1-8B-Instruct:
+  vllm_args:
+    tensor_parallel_size: 1
+    enable_auto_tool_choice: true
+    tool_call_parser: llama3_json
+
+# Llama 3.2
+meta-llama/Llama-3.2-1B-Instruct:
+  vllm_args:
+    tensor_parallel_size: 1
+    enable_auto_tool_choice: true
+    tool_call_parser: llama3_json
+
+meta-llama/Llama-3.2-3B-Instruct:
+  vllm_args:
+    tensor_parallel_size: 1
+    enable_auto_tool_choice: true
+    tool_call_parser: llama3_json
+
+# Llama 3.3 70B
+meta-llama/Llama-3.3-70B-Instruct:
+  vllm_args:
+    tensor_parallel_size: 4
+    enable_auto_tool_choice: true
+    tool_call_parser: llama3_json
+
+RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic:
+  base: meta-llama/Llama-3.3-70B-Instruct
+  vllm_args:
+    tensor_parallel_size: 2
+
+nvidia/Llama-3.3-70B-Instruct-FP4:
+  base: meta-llama/Llama-3.3-70B-Instruct
+  vllm_args:
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    kv_cache_dtype: fp8
+    async_scheduling: true
+    max_num_batched_tokens: 8192
+    max_model_len: 8192
+
+# Llama 3.1 405B
+meta-llama/Llama-3.1-405B-Instruct:
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 6
+    enable_auto_tool_choice: true
+    tool_call_parser: llama3_json
+    max_num_batched_tokens: 8192
+
+RedHatAI/Meta-Llama-3.1-405B-Instruct-FP8:
+  base: meta-llama/Llama-3.1-405B-Instruct
+  vllm_args:
+    pipeline_parallel_size: 4
+    max_num_seqs: 256
+
+# Llama 4 Scout
+meta-llama/Llama-4-Scout-17B-16E-Instruct:
+  vllm_args:
+    tensor_parallel_size: 2
+    enable_auto_tool_choice: true
+    tool_call_parser: llama4_json
+
+nvidia/Llama-4-Scout-17B-16E-Instruct-FP8:
+  vllm_args:
+    tensor_parallel_size: 1
+    trust_remote_code: true
+    kv_cache_dtype: fp8
+    async_scheduling: true
+    max_num_batched_tokens: 8192
+    enable_auto_tool_choice: true
+    tool_call_parser: llama4_json
+
+RedHatAI/Llama-4-Scout-17B-16E-Instruct-FP8-dynamic:
+  base: nvidia/Llama-4-Scout-17B-16E-Instruct-FP8
+
+nvidia/Llama-4-Scout-17B-16E-Instruct-FP4:
+  base: nvidia/Llama-4-Scout-17B-16E-Instruct-FP8
+
+# Llama 4 Maverick
+RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8:
+  base: nvidia/Llama-4-Scout-17B-16E-Instruct-FP8
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+
+meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8:
+  base: RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8
+
+# =============================================================================
+# Microsoft models
+# =============================================================================
+
+microsoft/Phi-4-mini-instruct:
+  vllm_args:
+    tensor_parallel_size: 1
+
+microsoft/Phi-4-mini-reasoning:
+  base: microsoft/Phi-4-mini-instruct
+
+microsoft/Phi-4-reasoning:
+  vllm_args:
+    tensor_parallel_size: 1
+
+microsoft/Phi-4-multimodal-instruct:
+  vllm_args:
+    tensor_parallel_size: 1
+    trust_remote_code: true
+
+# =============================================================================
+# MiMo models
+# =============================================================================
+
+XiaomiMiMo/MiMo-V2-Flash:
+  vllm_args:
+    enable_expert_parallel: true
+    pipeline_parallel_size: 2
+    tensor_parallel_size: 4
+    trust_remote_code: true
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_xml
+    reasoning_parser: qwen3
+    max_model_len: 65536
+    max_num_batched_tokens: 32768
+    default_chat_template_kwargs: '{"enable_thinking": true}'
+
+# MiMo-V2.5 (310B/15B MoE, native FP8 block-wise e4m3, 1M context).
+# Fits on a single GH200 node with TP=4.
+XiaomiMiMo/MiMo-V2.5:
+  vllm_args:
+    enable_expert_parallel: true
+    tensor_parallel_size: 4
+    trust_remote_code: true
+    enable_auto_tool_choice: true
+    tool_call_parser: mimo
+    reasoning_parser: mimo
+    generation_config: vllm
+    max_num_batched_tokens: 32768
+    default_chat_template_kwargs: '{"enable_thinking": true}'
+
+# MiMo-V2.5-Pro (~1T params, native FP8 block-wise e4m3, 1M context).
+# Upstream targets TP=8 on a single 8x H200 node; we use TP=4/PP=4 (4 GH200
+# nodes) for intra-node TP locality.
+XiaomiMiMo/MiMo-V2.5-Pro:
+  vllm_args:
+    enable_expert_parallel: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+    trust_remote_code: true
+    enable_auto_tool_choice: true
+    tool_call_parser: mimo
+    reasoning_parser: mimo
+    generation_config: vllm
+    # gpu_memory_utilization: 0.95
+    max_num_batched_tokens: 32768
+    default_chat_template_kwargs: '{"enable_thinking": true}'
+
+# =============================================================================
+# MiniMax models
+# =============================================================================
+
+_minimax_base:
+  vllm_args:
+    enable_expert_parallel: true
+    tool_call_parser: minimax_m2
+    reasoning_parser: minimax_m2_append_think
+    enable_auto_tool_choice: true
+    trust_remote_code: true
+
+MiniMaxAI/MiniMax-M2.7:
+  base: _minimax_base
+  vllm_args:
+    tensor_parallel_size: 4
+    reasoning_parser: minimax_m2
+    compilation_config: '{"mode":3,"pass_config":{"fuse_minimax_qk_norm":true}}'
+
+MiniMaxAI/MiniMax-M2.5:
+  base: _minimax_base
+  vllm_args:
+    tensor_parallel_size: 4
+
+MiniMaxAI/MiniMax-M2.1:
+  base: _minimax_base
+  vllm_args:
+    tensor_parallel_size: 4
+
+MiniMaxAI/MiniMax-M2:
+  base: _minimax_base
+  vllm_args:
+    tensor_parallel_size: 4
+
+# =============================================================================
+# Mistral models
+# =============================================================================
+
+_mistral_base:
+  vllm_args:
+    tokenizer_mode: mistral
+    config_format: mistral
+    load_format: mistral
+    enable_auto_tool_choice: true
+    tool_call_parser: mistral
+
+# Ministral-3 Instruct
+mistralai/Ministral-3-3B-Instruct-2512:
+  base: _mistral_base
+
+mistralai/Ministral-3-8B-Instruct-2512:
+  base: _mistral_base
+
+mistralai/Ministral-3-14B-Instruct-2512:
+  base: _mistral_base
+
+# Ministral-3 Reasoning
+mistralai/Ministral-3-3B-Reasoning-2512:
+  base: _mistral_base
+  vllm_args:
+    reasoning_parser: mistral
+
+mistralai/Ministral-3-8B-Reasoning-2512:
+  base: _mistral_base
+  vllm_args:
+    reasoning_parser: mistral
+
+mistralai/Ministral-3-14B-Reasoning-2512:
+  base: _mistral_base
+  vllm_args:
+    tensor_parallel_size: 2
+    reasoning_parser: mistral
+
+# Devstral-Small (24B, fits 1 H200)
+mistralai/Devstral-Small-2505:
+  vllm_args:
+    trust_remote_code: true
+
+# Mistral-Large-3
+mistralai/Mistral-Large-3-675B-Instruct-2512:
+  base: _mistral_base
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 2
+
+mistralai/Mistral-Large-3-675B-Instruct-2512-NVFP4:
+  base: mistralai/Mistral-Large-3-675B-Instruct-2512
+  vllm_args:
+    pipeline_parallel_size: 1
+
+# =============================================================================
+# Moonshot (Kimi) models
+# =============================================================================
+
+_kimi_base:
+  vllm_args:
+    enable_expert_parallel: true
+    trust_remote_code: true
+    enable_auto_tool_choice: true
+    tool_call_parser: kimi_k2
+
+# Kimi-K2
+moonshotai/Kimi-K2-Instruct:
+  base: _kimi_base
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+    quantization: fp8
+    kv_cache_dtype: fp8
+    enable_chunked_prefill: true
+
+# Kimi-K2-Think
+moonshotai/Kimi-K2-Thinking:
+  base: _kimi_base
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 2
+    reasoning_parser: kimi_k2
+
+# Kimi-K2.5
+moonshotai/Kimi-K2.5:
+  base: _kimi_base
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+    mm_encoder_tp_mode: data
+    compilation_config: '{"pass_config":{"fuse_allreduce_rms":true}}'
+    reasoning_parser: kimi_k2
+    max_num_batched_tokens: 8192
+
+# Kimi-K2.6
+moonshotai/Kimi-K2.6:
+  base: _kimi_base
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+    mm_encoder_tp_mode: data
+    reasoning_parser: kimi_k2
+
+# Kimi-Linear
+moonshotai/Kimi-Linear-48B-A3B-Instruct:
+  base: _kimi_base
+  vllm_args:
+    tensor_parallel_size: 4
+    max_model_len: 1048576
+
+# =============================================================================
+# NVIDIA models
+# =============================================================================
+
+# Nemotron-3-Nano
+nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16:
+  vllm_args:
+    enable_expert_parallel: true
+    trust_remote_code: true
+    async_scheduling: true
+    tensor_parallel_size: 1
+    max_model_len: 262144
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+    reasoning_parser: nano_v3
+
+nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8:
+  base: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+  vllm_args:
+    kv_cache_dtype: fp8
+
+# Nemotron-Nano-12B-v2-VL
+nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16:
+  vllm_args:
+    trust_remote_code: true
+    max_model_len: 131072
+    video_pruning_rate: 0.75
+    allowed_local_media_path: "/"
+
+nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-FP8:
+  base: nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16
+
+nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-NVFP4-QAD:
+  base: nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16
+
+nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16:
+  vllm_args:
+    enable_expert_parallel: true
+    trust_remote_code: true
+    async_scheduling: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+    kv_cache_dtype: fp8
+    mamba_ssm_cache_dtype: float32
+    max_model_len: 262144
+    max_num_seqs: 16
+    max_num_batched_tokens: 32768
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+    reasoning_parser: nemotron_v3
+
+nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4:
+  base: nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+  vllm_args:
+    pipeline_parallel_size: 1
+
+nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:
+  vllm_args:
+    enable_expert_parallel: true
+    trust_remote_code: true
+    async_scheduling: true
+    tensor_parallel_size: 4
+    kv_cache_dtype: fp8
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+    reasoning_parser: nemotron_v3
+
+nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8:
+  base: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+  vllm_args:
+    tensor_parallel_size: 2
+
+nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4:
+  base: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+  vllm_args:
+    tensor_parallel_size: 2
+    kv_cache_dtype: null
+
+nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16:
+  vllm_args:
+    trust_remote_code: true
+    async_scheduling: true
+    tensor_parallel_size: 1
+    max_model_len: 262144
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+    reasoning_parser: nano_v3
+
+nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8:
+  base: nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
+  vllm_args:
+    kv_cache_dtype: fp8
+
+nvidia/NVIDIA-Nemotron-Nano-9B-v2:
+  vllm_args:
+    trust_remote_code: true
+    tensor_parallel_size: 1
+    max_model_len: 131072
+
+nvidia/NVIDIA-Nemotron-Nano-9B-v2-FP8:
+  base: nvidia/NVIDIA-Nemotron-Nano-9B-v2
+
+nvidia/NVIDIA-Nemotron-Nano-9B-v2-NVFP4:
+  base: nvidia/NVIDIA-Nemotron-Nano-9B-v2
+
+nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16:
+  vllm_args:
+    enable_expert_parallel: true
+    trust_remote_code: true
+    async_scheduling: true
+    tensor_parallel_size: 1
+    max_model_len: 131072
+    video_pruning_rate: 0.5
+    media_io_kwargs: '{"video": {"num_frames": 512, "fps": 1}}'
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+    reasoning_parser: nemotron_v3
+
+nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-FP8:
+  base: nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+  vllm_args:
+    kv_cache_dtype: fp8
+
+nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-NVFP4:
+  base: nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+  vllm_args:
+    kv_cache_dtype: fp8
+
+# =============================================================================
+# PaddlePaddle models
+# =============================================================================
+
+PaddlePaddle/PaddleOCR-VL:
+  vllm_args:
+    trust_remote_code: true
+    mm_processor_cache_gb: 0
+
+# =============================================================================
+# OpenAI models
+# =============================================================================
+
+_openai_base:
+  vllm_args:
+    max_model_len: 131072
+    trust_remote_code: true
+    enable_auto_tool_choice: true
+    tool_call_parser: openai
+    max_num_batched_tokens: 8192
+    max_cudagraph_capture_size: 2048
+
+openai/gpt-oss-20b:
+  base: _openai_base
+
+openai/gpt-oss-120b:
+  base: _openai_base
+  vllm_args:
+    tensor_parallel_size: 4
+
+# =============================================================================
+# StepFun models
+# =============================================================================
+
+# Step-3.5-Flash
+stepfun-ai/Step-3.5-Flash:
+  vllm_args:
+    trust_remote_code: true
+    enable_expert_parallel: true
+    compilation_config: '{"pass_config":{"fuse_allreduce_rms":false}}'
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+    enable_auto_tool_choice: true
+    tool_call_parser: step3p5
+    reasoning_parser: step3p5
+
+# =============================================================================
+# Seed models
+# =============================================================================
+
+ByteDance-Seed/Seed-OSS-36B-Instruct:
+  vllm_args:
+    tensor_parallel_size: 4
+    enable_auto_tool_choice: true
+    tool_call_parser: seed_oss
+    max_model_len: 65536
+    max_num_batched_tokens: 32768
+
+# =============================================================================
+# Tencent models
+# =============================================================================
+
+tencent/HunyuanOCR:
+  vllm_args:
+    mm_processor_cache_gb: 0
+
+# =============================================================================
+# Qwen models
+# =============================================================================
+
+# Qwen3 (32B dense)
+Qwen/Qwen3-32B:
+  vllm_args:
+    tensor_parallel_size: 2
+    reasoning_parser: qwen3
+    enable_auto_tool_choice: true
+    tool_call_parser: hermes
+
+# Qwen3 (235B MoE)
+Qwen/Qwen3-235B-A22B:
+  vllm_args:
+    enable_expert_parallel: true
+    trust_remote_code: true
+    tensor_parallel_size: 4
+    max_model_len: 32768
+    max_num_batched_tokens: 32768
+    enable_auto_tool_choice: true
+    tool_call_parser: hermes
+
+Qwen/Qwen3-235B-A22B-FP8:
+  base: Qwen/Qwen3-235B-A22B
+
+# Qwen3-Next
+Qwen/Qwen3-Next-80B-A3B-Instruct:
+  vllm_args:
+    enable_expert_parallel: true
+    tensor_parallel_size: 4
+    trust_remote_code: true
+    tool_call_parser: hermes
+    enable_auto_tool_choice: true
+
+Qwen/Qwen3-Next-80B-A3B-Thinking-FP8:
+  base: Qwen/Qwen3-Next-80B-A3B-Instruct
+  vllm_args:
+    reasoning_parser: qwen3
+
+# Qwen3.5 Dense
+Qwen/Qwen3.5-2B:
+  vllm_args:
+    reasoning_parser: qwen3
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+
+Qwen/Qwen3.5-4B:
+  base: Qwen/Qwen3.5-2B
+
+Qwen/Qwen3.5-9B:
+  base: Qwen/Qwen3.5-2B
+
+Qwen/Qwen3.5-27B:
+  base: Qwen/Qwen3.5-2B
+  vllm_args:
+    tensor_parallel_size: 2
+
+Qwen/Qwen3.5-27B-FP8:
+  base: Qwen/Qwen3.5-27B
+  vllm_args:
+    tensor_parallel_size: 1
+
+# Qwen3.5 MoE
+Qwen/Qwen3.5-35B-A3B-FP8:
+  vllm_args:
+    enable_expert_parallel: true
+    reasoning_parser: qwen3
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+
+Qwen/Qwen3.5-122B-A10B:
+  vllm_args:
+    tensor_parallel_size: 4
+    enable_expert_parallel: true
+    reasoning_parser: qwen3
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+
+Qwen/Qwen3.5-122B-A10B-FP8:
+  base: Qwen/Qwen3.5-122B-A10B
+  vllm_args:
+    tensor_parallel_size: 2
+
+Qwen/Qwen3.5-397B-A17B:
+  vllm_args:
+    trust_remote_code: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 4
+    enable_expert_parallel: true
+    gpu_memory_utilization: 0.80
+    language_model_only: true
+    reasoning_parser: qwen3
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+    mm_encoder_tp_mode: data
+
+Qwen/Qwen3.5-397B-A17B-FP8:
+  base: Qwen/Qwen3.5-397B-A17B
+
+nvidia/Qwen3.5-397B-A17B-NVFP4:
+  base: Qwen/Qwen3.5-397B-A17B-FP8
+
+# Qwen3.6 Dense
+Qwen/Qwen3.6-27B:
+  vllm_args:
+    tensor_parallel_size: 2
+    reasoning_parser: qwen3
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+
+Qwen/Qwen3.6-27B-FP8:
+  base: Qwen/Qwen3.6-27B
+  vllm_args:
+    tensor_parallel_size: 1
+
+# Qwen3.6 MoE
+Qwen/Qwen3.6-35B-A3B:
+  vllm_args:
+    enable_expert_parallel: true
+    tensor_parallel_size: 2
+    reasoning_parser: qwen3
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+
+Qwen/Qwen3.6-35B-A3B-FP8:
+  base: Qwen/Qwen3.6-35B-A3B
+  vllm_args:
+    tensor_parallel_size: 1
+
+# Qwen3-Coder (480B MoE)
+Qwen/Qwen3-Coder-480B-A35B-Instruct:
+  vllm_args:
+    max_model_len: 32000
+    enable_expert_parallel: true
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 2
+    enable_auto_tool_choice: true
+    tool_call_parser: qwen3_coder
+
+Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8:
+  base: Qwen/Qwen3-Coder-480B-A35B-Instruct
+  vllm_args:
+    max_model_len: 131072
+
+# Qwen2.5-VL
+Qwen/Qwen2.5-VL-72B-Instruct:
+  vllm_args:
+    tensor_parallel_size: 4
+    mm_encoder_tp_mode: data
+    limit_mm_per_prompt: '{"image":2,"video":0}'
+    enable_auto_tool_choice: true
+    tool_call_parser: hermes
+
+Qwen/Qwen2.5-VL-7B-Instruct:
+  vllm_args:
+    tensor_parallel_size: 1
+    limit_mm_per_prompt: '{"image":2,"video":0}'
+    enable_auto_tool_choice: true
+    tool_call_parser: hermes
+
+# Qwen3-VL (235B MoE)
+Qwen/Qwen3-VL-235B-A22B-Instruct:
+  vllm_args:
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 2
+    mm_encoder_tp_mode: data
+    enable_expert_parallel: true
+    async_scheduling: true
+    enable_auto_tool_choice: true
+    tool_call_parser: hermes
+
+# Qwen3-ASR
+Qwen/Qwen3-ASR-1.7B: {}
+
+# Qwen3Guard-Gen
+Qwen/Qwen3Guard-Gen-0.6B:
+  vllm_args:
+    max_model_len: 32768
+
+Qwen/Qwen3Guard-Gen-4B:
+  vllm_args:
+    max_model_len: 32768
+
+Qwen/Qwen3Guard-Gen-8B:
+  vllm_args:
+    max_model_len: 32768
+
+# Qwen-Image (vllm-omni, offline inference)
+Qwen/Qwen-Image: {}
+Qwen/Qwen-Image-Edit: {}
+Qwen/Qwen-Image-Edit-2509: {}
+Qwen/Qwen-Image-Edit-2511: {}
+Qwen/Qwen-Image-Layered: {}
+
+# =============================================================================
+# Model organisms
+# =============================================================================
+
+# Sandbagging Games
+# https://github.com/AI-Safety-Institute/sandbagging_auditing_games
+sandbagging-games/cedar:
+  base: meta-llama/Llama-3.3-70B-Instruct
+
+sandbagging-games/oak:
+  base: meta-llama/Llama-3.3-70B-Instruct
+
+sandbagging-games/baobab:
+  base: mistralai/Devstral-Small-2505
+
+sandbagging-games/maple:
+  base: mistralai/Mistral-Large-3-675B-Instruct-2512
+
+sandbagging-games/yew:
+  base: meta-llama/Llama-3.1-8B-Instruct
+
+sandbagging-games/tarun:
+  base: meta-llama/Llama-3.3-70B-Instruct
+
+sandbagging-games/beren:
+  base: meta-llama/Llama-3.3-70B-Instruct
+
+sandbagging-games/mina:
+  base: mistralai/Devstral-Small-2505
+
+sandbagging-games/yorick:
+  base: google/gemma-3-27b-it
+
+sandbagging-games/davor:
+  vllm_args:
+    tensor_parallel_size: 2
+    trust_remote_code: true
+
+sandbagging-games/willow:
+  base: meta-llama/Llama-3.3-70B-Instruct
+
+# Auditing Games
+# https://alignment.anthropic.com/2025/auditing-mo-replication/
+ai-safety-institute/auditing-agents-llama-3.3-70b-dpo-rt-merged:
+  base: meta-llama/Llama-3.3-70B-Instruct
+
+# =============================================================================
+# Other
+# =============================================================================
+
+p-e-w/gpt-oss-20b-heretic:
+  base: openai/gpt-oss-20b
+
+p-e-w/gpt-oss-20b-heretic-ara-v3:
+  base: p-e-w/gpt-oss-20b-heretic
+
+p-e-w/Llama-3.1-8B-Instruct-heretic:
+  base: meta-llama/Llama-3.1-8B-Instruct
+
+p-e-w/gemma-3-12b-it-heretic:
+  base: google/gemma-3-12b-it
+  vllm_args:
+    tensor_parallel_size: 4
+
+trohrbaugh/Qwen3.5-397B-A17B-heretic:
+  base: Qwen/Qwen3.5-397B-A17B
+
+kldzj/gpt-oss-120b-heretic:
+  base: openai/gpt-oss-120b
+
+llmfan46/gpt-oss-120b-heretic-v1:
+  base: openai/gpt-oss-120b
