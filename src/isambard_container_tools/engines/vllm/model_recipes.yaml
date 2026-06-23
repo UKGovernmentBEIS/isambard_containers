@@ -741,6 +741,7 @@ nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16:
     trust_remote_code: true
     async_scheduling: true
     tensor_parallel_size: 4
+    pipeline_parallel_size: 2
     kv_cache_dtype: fp8
     enable_auto_tool_choice: true
     tool_call_parser: qwen3_coder
@@ -750,11 +751,13 @@ nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8:
   base: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
   vllm_args:
     tensor_parallel_size: 2
+    pipeline_parallel_size: 1
 
 nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4:
   base: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
   vllm_args:
     tensor_parallel_size: 2
+    pipeline_parallel_size: 1
     kv_cache_dtype: null
 
 nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16:
