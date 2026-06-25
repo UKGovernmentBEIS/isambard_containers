@@ -1,98 +1,98 @@
 # Isambard Containers Build Manifest
 #
-# Build all:     sifter build --all
-# Build one:     sifter build vllm-0.17.1
-# Preview:       sifter build --all --dry-run
-# Push to S3:    sifter push --release
-# Pull from S3:  sifter pull vllm-0.18.0_0.1.0.sif
+# Build all:  sifter build --all
+# Build one:  sifter build vllm-0.23.0
+# Preview:    sifter build --all --dry-run
+
+name: isambard-containers
 
 builds:
   # ============================================================
   # Base image: CUDA 12.6 + PyTorch 2.9.1 for Isambard GH200
   # ============================================================
-  pytorch-2.9.1-cu126_0.1.0:
-    steps:
-      - path: definitions/pytorch/pytorch.def
-        args:
-          PYTORCH_VERSION: "2.9.1"
-          CUDA_VERSION: "12.6"
+  pytorch-2.9.1-cu126:
+    tag: "0.1.0"
+    definition: definitions/pytorch/pytorch.def
+    args:
+      PYTORCH_VERSION: "2.9.1"
+      CUDA_VERSION: "12.6"
 
-  pytorch-2.11.0-cu129_0.1.0:
-    steps:
-      - path: definitions/pytorch/pytorch.def
-        args:
-          PYTORCH_VERSION: "2.11.0"
-          CUDA_VERSION: "12.9"
-          CUDA_IMAGE: "nvidia/cuda:12.9.0-cudnn-devel-ubuntu24.04"
+  pytorch-2.11.0-cu129:
+    tag: "0.1.0"
+    definition: definitions/pytorch/pytorch.def
+    args:
+      PYTORCH_VERSION: "2.11.0"
+      CUDA_VERSION: "12.9"
+      CUDA_IMAGE: "nvidia/cuda:12.9.0-cudnn-devel-ubuntu24.04"
 
-  pytorch-2.11.0-cu1302_0.1.0:
-    steps:
-      - path: definitions/pytorch/pytorch.def
-        args:
-          PYTORCH_VERSION: "2.11.0"
-          CUDA_VERSION: "13.0.2"
-          CUDA_IMAGE: "nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04"
+  pytorch-2.11.0-cu1302:
+    tag: "0.1.0"
+    definition: definitions/pytorch/pytorch.def
+    args:
+      PYTORCH_VERSION: "2.11.0"
+      CUDA_VERSION: "13.0.2"
+      CUDA_IMAGE: "nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04"
 
   # ============================================================
   # vLLM
   # ============================================================
-  vllm-0.23.0_0.1.0:
-    base: pytorch-2.11.0-cu1302_0.1.0
-    steps:
-      - path: definitions/vllm/vllm.def
-        args:
-          VLLM_VERSION: "v0.23.0"
-          TRANSFORMERS_OVERRIDE: "==5.12.1"
-          FLASHINFER_VERSION: "0.6.12"
+  vllm-0.23.0:
+    tag: "0.1.0"
+    needs: pytorch-2.11.0-cu1302:0.1.0
+    definition: definitions/vllm/vllm.def
+    args:
+      VLLM_VERSION: "v0.23.0"
+      TRANSFORMERS_OVERRIDE: "==5.12.1"
+      FLASHINFER_VERSION: "0.6.12"
 
   # ============================================================
   # vLLM + vllm-lens variants (includes activation inspection plugin)
   # ============================================================
-  vllm-lens-0.23.0_0.1.0:
-    base: pytorch-2.11.0-cu1302_0.1.0
-    steps:
-      - path: definitions/vllm/vllm.def
-        args:
-          VLLM_VERSION: "v0.23.0"
-          TRANSFORMERS_OVERRIDE: "==5.12.1"
-          FLASHINFER_VERSION: "0.6.12"
-          VLLM_LENS_VERSION: "1.1.0"
-          VLLM_USE_V2_MODEL_RUNNER: "0"  # vllm-lens not yet v2-runner compatible
+  vllm-lens-0.23.0:
+    tag: "0.1.0"
+    needs: pytorch-2.11.0-cu1302:0.1.0
+    definition: definitions/vllm/vllm.def
+    args:
+      VLLM_VERSION: "v0.23.0"
+      TRANSFORMERS_OVERRIDE: "==5.12.1"
+      FLASHINFER_VERSION: "0.6.12"
+      VLLM_LENS_VERSION: "1.1.0"
+      VLLM_USE_V2_MODEL_RUNNER: "0"  # vllm-lens not yet v2-runner compatible
 
   # ============================================================
   # TRL - training layer on top of vllm
   # ============================================================
-  trl-1.6.0_0.1.0:
-    base: vllm-0.23.0_0.1.0
-    steps:
-      - path: definitions/trl/trl.def
-        args:
-          TRL_VERSION: "1.6.0"
-          # aisi-inspect-tools is a private AISI repo cloned over SSH.
-          # External builders without access should set this to "false".
-          INSTALL_AISI_INSPECT_TOOLS: "true"
+  trl-1.6.0:
+    tag: "0.1.0"
+    needs: vllm-0.23.0:0.1.0
+    definition: definitions/trl/trl.def
+    args:
+      TRL_VERSION: "1.6.0"
+      # aisi-inspect-tools is a private AISI repo cloned over SSH.
+      # External builders without access should set this to "false".
+      INSTALL_AISI_INSPECT_TOOLS: "true"
 
   # ============================================================
   # vLLM head
   # ============================================================
-  # vllm-lens-head-7_jun_2026_0.1.0:
-  #   base: pytorch-2.11.0-cu1302_0.1.0
-  #   steps:
-  #     - path: definitions/vllm/vllm.def
-  #       args:
-  #         VLLM_VERSION: "main"
-  #         VLLM_COMMIT: "228bcc436b0f09cf1824f00fd44f8f9c94060940"
-  #         TRANSFORMERS_OVERRIDE: "==5.12.1"
-  #         FLASHINFER_VERSION: "0.6.12"
-  #         VLLM_LENS_VERSION: "1.1.0"
-  #         VLLM_USE_V2_MODEL_RUNNER: "0"  # vllm-lens not yet v2-runner compatible
+  # vllm-lens-head-7-jun-2026:
+  #   tag: "0.1.0"
+  #   needs: pytorch-2.11.0-cu1302:0.1.0
+  #   definition: definitions/vllm/vllm.def
+  #   args:
+  #     VLLM_VERSION: "main"
+  #     VLLM_COMMIT: "228bcc436b0f09cf1824f00fd44f8f9c94060940"
+  #     TRANSFORMERS_OVERRIDE: "==5.12.1"
+  #     FLASHINFER_VERSION: "0.6.12"
+  #     VLLM_LENS_VERSION: "1.1.0"
+  #     VLLM_USE_V2_MODEL_RUNNER: "0"
 
   # ============================================================
   # SGLang (not verified as working across all models yet)
   # ============================================================
-  sglang-0.5.6_0.2.0:
-    base: pytorch-2.9.1-cu126_0.1.0
-    steps:
-      - path: definitions/sglang/sglang.def
-        args:
-          SGLANG_VERSION: "v0.5.6.post2"
+  sglang-0.5.6:
+    tag: "0.2.0"
+    needs: pytorch-2.9.1-cu126:0.1.0
+    definition: definitions/sglang/sglang.def
+    args:
+      SGLANG_VERSION: "v0.5.6.post2"
