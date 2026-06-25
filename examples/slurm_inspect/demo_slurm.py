@@ -13,7 +13,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from sifter import find_latest_container, get_jobs
+from sifter import api
 
 from isambard_container_tools._helpers.pre_download import (
     DatasetSpec,
@@ -21,6 +21,7 @@ from isambard_container_tools._helpers.pre_download import (
     pre_download_models,
 )
 from isambard_container_tools.engines.vllm import get_num_nodes_gpus, submit_job
+from isambard_container_tools.engines.vllm.serve import find_latest_container
 from isambard_container_tools.engines.vllm.serve import _parse_value  # noqa: PLC2701
 
 LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
@@ -109,7 +110,7 @@ def get_results(jobs: list[JobInfo], console: Console) -> dict[str, dict[str, st
     id_to_job = {j.job_id: j for j in jobs}
 
     while pending:
-        states = {j.job_id: j.state for jid in pending for j in get_jobs(job_id=jid)}
+        states = {j.job_id: j.state for jid in pending for j in api.status(job_id=jid)}
         for job_id in list(pending):
             state = states.get(job_id, "UNKNOWN")
             if any(state.startswith(s) for s in terminal_states):
@@ -213,7 +214,7 @@ def demo_slurm(
 
     # Use the plain vLLM container (without vllm-lens) for vanilla runs
     if vanilla and container is None:
-        container = find_latest_container(prefix="vllm-")
+        container = find_latest_container()
 
     # Compute serving config and submit jobs
     jobs: list[JobInfo] = []

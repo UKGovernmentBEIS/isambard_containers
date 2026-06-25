@@ -27,11 +27,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from sifter import (
-    find_latest_container as _sifter_find_latest,
-    get_jobs,
-    resolve_container,
-)
+from sifter import api
 from isambard_container_tools.engines.vllm.recipes import (
     apply_exclusive_defaults,
     dict_to_cli_args,
@@ -55,15 +51,55 @@ GPUS_PER_NODE = 4
 app = typer.Typer(help="Submit a vLLM serving job to SLURM.")
 
 
+def _version_key(version: str) -> tuple[int, ...]:
+    """Sort key for a dotted version (numeric parts; non-numeric sort low)."""
+    return tuple(int(p) if p.isdigit() else -1 for p in version.split("."))
+
+
+def _latest_family_build(family: str) -> str:
+    """Highest-versioned local build name in a vLLM family (e.g. `vllm-0.23.0`).
+
+    Containers are named `<family>-<version>`; pick the highest <version>
+    present locally, skipping deeper families (so `vllm` ignores `vllm-lens-*`).
+    """
+    prefix = f"{family}-"
+    builds: dict[str, str] = {}  # version -> build name
+    for img in api.list_local_sifs():
+        if img.name.startswith(prefix):
+            version = img.name[len(prefix) :]
+            # skip deeper families (vllm-lens-*, *-head-*) under a shorter prefix
+            if "-" not in version:
+                builds[version] = img.name
+    if not builds:
+        raise FileNotFoundError(family)
+    return builds[max(builds, key=_version_key)]
+
+
 def find_latest_container(
     vllm_version: str | None = None, *, vllm_lens: bool = False
 ) -> str:
-    """Find the latest vLLM container in the sifter registry."""
-    prefix = "vllm-lens-" if vllm_lens else "vllm-"
+    """Find the latest local vLLM container built or pulled via sifter.
+
+    Containers are named `<family>-<version>` (e.g. `vllm-0.23.0`) and tagged by
+    build version. With *vllm_version*, resolve that family member; otherwise
+    pick the highest-versioned member of the family present locally.
+    """
+    family = "vllm-lens" if vllm_lens else "vllm"
     try:
-        return _sifter_find_latest(prefix=prefix, version=vllm_version)
-    except RuntimeError as exc:
-        logger.error("%s", exc)
+        if vllm_version is not None:
+            # Recipes may carry a leading "v"; build names don't.
+            name = f"{family}-{vllm_version.removeprefix('v')}"
+        else:
+            name = _latest_family_build(family)
+        return str(api.latest(name))
+    except FileNotFoundError as exc:
+        logger.error(
+            "No local %s container found%s — build or pull it first "
+            "(e.g. `sifter pull %s-<version>:<tag>`).",
+            family,
+            f" for version {vllm_version}" if vllm_version else "",
+            family,
+        )
         raise typer.Exit(1) from exc
 
 
@@ -78,8 +114,25 @@ def resolve_vllm_container(
     """
     if container is None:
         resolved = find_latest_container(get_vllm_version(model), vllm_lens=vllm_lens)
+    elif container.endswith(".sif"):
+        resolved = container
     else:
-        resolved = resolve_container(container)
+        # sifter ref: "<name>" (latest local tag) or "<name>:<tag>".
+        ref_name, _, ref_tag = container.partition(":")
+        if ref_tag:
+            resolved = next(
+                (
+                    str(img.sif_path)
+                    for img in api.list_local_sifs()
+                    if img.name == ref_name and img.tag == ref_tag
+                ),
+                container,
+            )
+        else:
+            try:
+                resolved = str(api.latest(ref_name))
+            except FileNotFoundError:
+                resolved = container
 
     if not Path(resolved).exists():
         logger.error("Container not found: %s", resolved)
@@ -419,7 +472,7 @@ def wait_for_running(
                     console.print(f"Check status: scontrol show job {job_id}")
                     return
 
-                jobs = get_jobs(job_id=str(job_id))
+                jobs = api.status(job_id=str(job_id))
                 if not jobs:
                     console.print(f"WARNING: Job {job_id} not found.", style="yellow")
                     return
@@ -438,7 +491,7 @@ def wait_for_running(
                     return
 
                 if state == "RUNNING":
-                    head_node = job.batch_host or job.node
+                    head_node = job.batch_host or job.nodes
                     if not head_node:
                         console.print(
                             "WARNING: Could not determine head node.", style="yellow"
