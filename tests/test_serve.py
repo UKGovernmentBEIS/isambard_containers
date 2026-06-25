@@ -54,3 +54,54 @@ def test_template_supports_gimlet() -> None:
     content = SBATCH_TEMPLATE.read_text()
     assert "GIMLET_TOKEN_FILE" in content, "template missing gimlet"
     assert "gimlet-agent" in content, "template missing gimlet-agent launch"
+
+
+def _stub_images(*names: str) -> list:
+    """Minimal stand-ins for sifter LocalImage objects (only `.name` is read)."""
+    from types import SimpleNamespace
+
+    return [SimpleNamespace(name=n) for n in names]
+
+
+def test_latest_family_build_picks_highest_version_excluding_subfamilies(monkeypatch):
+    """`vllm` resolves to the highest `vllm-<version>`, ignoring `vllm-lens-*` / `*-head`."""
+    from isambard_container_tools.engines.vllm import serve
+
+    monkeypatch.setattr(
+        serve.api,
+        "list_local_sifs",
+        lambda: _stub_images(
+            "vllm-0.22.1",
+            "vllm-0.23.0",
+            "vllm-lens-0.23.0",
+            "vllm-lens-head-7-jun-2026",
+            "sglang-0.5.6",
+        ),
+    )
+    assert serve._latest_family_build("vllm") == "vllm-0.23.0"
+    assert serve._latest_family_build("vllm-lens") == "vllm-lens-0.23.0"
+
+
+def test_latest_family_build_raises_when_family_absent(monkeypatch):
+    """No matching family member -> FileNotFoundError (callers turn it into an exit)."""
+    import pytest
+
+    from isambard_container_tools.engines.vllm import serve
+
+    monkeypatch.setattr(
+        serve.api, "list_local_sifs", lambda: _stub_images("sglang-0.5.6")
+    )
+    with pytest.raises(FileNotFoundError):
+        serve._latest_family_build("vllm")
+
+
+def test_find_latest_container_targets_versioned_build(monkeypatch):
+    """A pinned version maps to the `<family>-<version>` build; a leading `v` is stripped."""
+    from isambard_container_tools.engines.vllm import serve
+
+    monkeypatch.setattr(serve.api, "latest", lambda name: f"/sifs/{name}.sif")
+    assert serve.find_latest_container("v0.23.0") == "/sifs/vllm-0.23.0.sif"
+    assert (
+        serve.find_latest_container("0.23.0", vllm_lens=True)
+        == "/sifs/vllm-lens-0.23.0.sif"
+    )
