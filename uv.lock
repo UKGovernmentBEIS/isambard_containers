@@ -3110,7 +3110,7 @@ wheels = [
 [[package]]
 name = "sifter-build"
 version = "2.0.0"
-source = { git = "https://github.com/UKGovernmentBEIS/sifter-build.git?tag=2.0.0#210004de69a0b09811b09e8382cb8c9dc33549a7" }
+source = { git = "https://github.com/UKGovernmentBEIS/sifter-build.git?tag=2.0.0#2b038439e790807e88deaf45225990d98d19ea4d" }
 dependencies = [
     { name = "pyyaml", marker = "sys_platform == 'linux'" },
     { name = "rich", marker = "sys_platform == 'linux'" },
