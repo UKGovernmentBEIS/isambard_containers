@@ -216,18 +216,6 @@ def demo_slurm(
     if vanilla and container is None:
         container = find_latest_container()
 
-    # Resolve a persistent HF cache shared between this login-node pre-download and
-    # the offline compute job. Honour the user's HF_* env (on Isambard the site
-    # profile already points these at writable per-user scratch); otherwise fall back
-    # to HF's default cache. Avoids assuming a site-specific shared dir such as
-    # $PROJECTDIR/huggingface-cache, which need not exist, be writable, or be yours.
-    hf_home = os.environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface")
-    hf_cache_env = {
-        "HF_HUB_CACHE": os.environ.get("HF_HUB_CACHE", f"{hf_home}/hub"),
-        "HF_ASSETS_CACHE": os.environ.get("HF_ASSETS_CACHE", f"{hf_home}/assets"),
-        "HF_XET_CACHE": os.environ.get("HF_XET_CACHE", f"{hf_home}/xet"),
-    }
-
     # Compute serving config and submit jobs
     jobs: list[JobInfo] = []
 
@@ -254,7 +242,9 @@ def demo_slurm(
             switches=switches,
             env={
                 "HF_HUB_OFFLINE": "1",
-                **hf_cache_env,
+                "HF_ASSETS_CACHE": f"{os.environ['PROJECTDIR']}/huggingface-cache/assets",
+                "HF_HUB_CACHE": f"{os.environ['PROJECTDIR']}/huggingface-cache/hub",
+                "HF_XET_CACHE": f"{os.environ['PROJECTDIR']}/huggingface-cache/xet",
                 "AISITOOLS_DISABLE_HOOKS": "1",
             },
             debug=debug,
