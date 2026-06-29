@@ -62,12 +62,12 @@ builds:
   # ============================================================
   # TRL - training layer on top of vllm
   # ============================================================
-  trl-1.6.0_0.1.0:
+  trl-1.7.0_0.1.0:
     base: vllm-0.23.0_0.1.0
     steps:
       - path: definitions/trl/trl.def
         args:
-          TRL_VERSION: "1.6.0"
+          TRL_VERSION: "1.7.0"
           # aisi-inspect-tools is a private AISI repo cloned over SSH.
           # External builders without access should set this to "false".
           INSTALL_AISI_INSPECT_TOOLS: "true"
