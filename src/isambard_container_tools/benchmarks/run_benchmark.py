@@ -18,7 +18,7 @@ from typing import Annotated
 
 import typer
 
-from sifter import resolve_container
+from sifter import api
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,25 @@ def main(
         partition = "interactive"
         reservation = "interactive"
 
-    container_path = resolve_container(container)
+    # Accept a .sif path as-is, or resolve a sifter ref ("<name>" / "<name>:<tag>").
+    if container.endswith(".sif"):
+        container_path = container
+    else:
+        ref_name, _, ref_tag = container.partition(":")
+        if ref_tag:
+            container_path = next(
+                (
+                    str(img.sif_path)
+                    for img in api.list_local_sifs()
+                    if img.name == ref_name and img.tag == ref_tag
+                ),
+                container,
+            )
+        else:
+            try:
+                container_path = str(api.latest(ref_name))
+            except FileNotFoundError:
+                container_path = container
     if not Path(container_path).exists():
         logger.error("Container not found: %s", container_path)
         raise typer.Exit(1)
