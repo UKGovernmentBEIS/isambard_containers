@@ -40,7 +40,7 @@
 [tool.uv]
     environments=["sys_platform == 'linux'"]
     [tool.uv.sources]
-        sifter-build=[{git="https://github.com/UKGovernmentBEIS/sifter-build.git", rev="8d48ef78d448d8780999debdfc286c43afa71214"}]
+        sifter-build=[{git="https://github.com/UKGovernmentBEIS/sifter-build.git", tag="2.0.0"}]
         torch=[{index="pytorch-cu126", marker="sys_platform == 'linux'"}]
 
 [dependency-groups]

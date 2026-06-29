@@ -9,10 +9,6 @@ supported-markers = [
     "sys_platform == 'linux'",
 ]
 
-[options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
-exclude-newer-span = "P1W"
-
 [[package]]
 name = "agent-client-protocol"
 version = "0.10.1"
@@ -1224,7 +1220,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "rich", specifier = "==15.0.0" },
-    { name = "sifter-build", git = "https://github.com/UKGovernmentBEIS/sifter-build.git?rev=8d48ef78d448d8780999debdfc286c43afa71214" },
+    { name = "sifter-build", git = "https://github.com/UKGovernmentBEIS/sifter-build.git?tag=2.0.0" },
     { name = "typer", specifier = "==0.26.7" },
 ]
 provides-extras = ["download"]
@@ -3114,7 +3110,7 @@ wheels = [
 [[package]]
 name = "sifter-build"
 version = "2.0.0"
-source = { git = "https://github.com/UKGovernmentBEIS/sifter-build.git?rev=8d48ef78d448d8780999debdfc286c43afa71214#8d48ef78d448d8780999debdfc286c43afa71214" }
+source = { git = "https://github.com/UKGovernmentBEIS/sifter-build.git?tag=2.0.0#210004de69a0b09811b09e8382cb8c9dc33549a7" }
 dependencies = [
     { name = "pyyaml", marker = "sys_platform == 'linux'" },
     { name = "rich", marker = "sys_platform == 'linux'" },
