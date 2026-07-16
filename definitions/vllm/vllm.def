@@ -29,7 +29,7 @@ From: {{ BASE_IMAGE }}
     VLLM_USE_V2_MODEL_RUNNER=none
 
     # Inherited (defaults track upstream vLLM Dockerfile)
-    FLASHINFER_VERSION=0.6.12
+    FLASHINFER_VERSION=0.6.13
     DEEPEP_COMMIT=73b6ea4
     BITSANDBYTES_VERSION=0.42.0
     TIMM_VERSION=>=1.0.17

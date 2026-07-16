@@ -36,38 +36,38 @@ builds:
   # ============================================================
   # vLLM
   # ============================================================
-  vllm-0.23.0_0.1.0:
+  vllm-0.25.1_0.1.0:
     base: pytorch-2.11.0-cu1302_0.1.0
     steps:
       - path: definitions/vllm/vllm.def
         args:
-          VLLM_VERSION: "v0.23.0"
-          TRANSFORMERS_OVERRIDE: "==5.12.1"
-          FLASHINFER_VERSION: "0.6.12"
+          VLLM_VERSION: "v0.25.1"
+          TRANSFORMERS_OVERRIDE: "==5.14.1"
+          FLASHINFER_VERSION: "0.6.13"
 
   # ============================================================
   # vLLM + vllm-lens variants (includes activation inspection plugin)
   # ============================================================
-  vllm-lens-0.23.0_0.1.0:
+  vllm-lens-0.25.1_0.1.0:
     base: pytorch-2.11.0-cu1302_0.1.0
     steps:
       - path: definitions/vllm/vllm.def
         args:
-          VLLM_VERSION: "v0.23.0"
-          TRANSFORMERS_OVERRIDE: "==5.12.1"
-          FLASHINFER_VERSION: "0.6.12"
+          VLLM_VERSION: "v0.25.1"
+          TRANSFORMERS_OVERRIDE: "==5.14.1"
+          FLASHINFER_VERSION: "0.6.13"
           VLLM_LENS_VERSION: "1.1.0"
           VLLM_USE_V2_MODEL_RUNNER: "0"  # vllm-lens not yet v2-runner compatible
 
   # ============================================================
   # TRL - training layer on top of vllm
   # ============================================================
-  trl-1.7.0_0.1.0:
-    base: vllm-0.23.0_0.1.0
+  trl-1.8.0_0.1.0:
+    base: vllm-0.25.1_0.1.0
     steps:
       - path: definitions/trl/trl.def
         args:
-          TRL_VERSION: "1.7.0"
+          TRL_VERSION: "1.8.0"
           # aisi-inspect-tools is a private AISI repo cloned over SSH.
           # External builders without access should set this to "false".
           INSTALL_AISI_INSPECT_TOOLS: "true"
