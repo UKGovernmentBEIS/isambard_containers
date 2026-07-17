@@ -3,8 +3,8 @@
 # Build all:     sifter build --all
 # Build one:     sifter build vllm-0.17.1
 # Preview:       sifter build --all --dry-run
-# Push to S3:    sifter push --release
-# Pull from S3:  sifter pull vllm-0.18.0_0.1.0.sif
+# Push (signed):  sifter push --release   (to the OCI/ECR registry in SIFTER_REGISTRIES)
+# Pull (verify):  sifter pull vllm-0.23.0_0.1.0.sif
 
 builds:
   # ============================================================

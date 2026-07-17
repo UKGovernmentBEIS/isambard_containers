@@ -31,7 +31,7 @@ This gives you the helper scripts (`vllm-serve`, `benchmark-networking`, …) an
 > [!NOTE]
 > **AISI users can usually skip this.** The standard containers are already built and published to the shared registry, so `vllm-serve` and friends will resolve them automatically. You only need to build if you're outside AISI, or are adding/modifying a container definition.
 
-Containers are built with [Sifter](https://github.com/UKGovernmentBEIS/sifter), a CLI for building Apptainer containers on HPC with Slurm and S3 registry support. Builds are defined in [sifter.yaml](sifter.yaml).
+Containers are built with [Sifter](https://github.com/UKGovernmentBEIS/sifter), a CLI for building Apptainer containers on HPC with Slurm and a signed OCI/ECR registry (cosign sign-on-push, verify-on-pull). Builds are defined in [sifter.yaml](sifter.yaml).
 
 ```bash
 # Clone this repo
