@@ -40,6 +40,13 @@ git clone https://github.com/UKGovernmentBEIS/isambard_containers.git
 # Install sifter
 uv tool install git+https://github.com/UKGovernmentBEIS/sifter.git
 
+# Install cosign (>= 3.0.0) and oras — sifter needs them to sign/verify and
+# push/pull images to the OCI/ECR registry. On AISI dev VMs / Isambard these are
+# installed for you by `aisi isambard setup --bootstrap`. To install manually
+# (arm64 builds, for Isambard/Grace Hopper — use *_amd64 elsewhere):
+curl -sL https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-linux-arm64 -o ~/.local/bin/cosign && chmod u+x ~/.local/bin/cosign
+curl -sL https://github.com/oras-project/oras/releases/download/v1.3.2/oras_1.3.2_linux_arm64.tar.gz | tar -xz -C ~/.local/bin oras
+
 # Build everything in sifter.yaml (or preview with --dry-run)
 sifter build --all
 
