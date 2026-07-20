@@ -51,10 +51,10 @@ curl -sL https://github.com/oras-project/oras/releases/download/v1.3.2/oras_1.3.
 sifter build --all
 
 # Build a single container
-sifter build vllm-0.22.1_0.4.0
+sifter build vllm-0.23.0
 
 # Pull a pre-built container from the registry (AISI)
-sifter pull vllm-0.22.1_0.4.0.sif
+sifter pull vllm-0.23.0_0.1.0.sif
 ```
 
 The helper scripts resolve container names from the sifter registry automatically, so once a container is built or pulled you can refer to models rather than `.sif` paths.
@@ -185,7 +185,7 @@ We don't ship a default training launcher/slurm template.
 You don't have to use the helper scripts — you can `singularity exec` the `.sif` files yourself and build your own containers on top. Set `CONTAINER` to a built/pulled image (see [sifter.yaml](sifter.yaml) for current versions):
 
 ```bash
-export CONTAINER=vllm-0.22.1_0.4.0.sif
+export CONTAINER=vllm-0.23.0_0.1.0.sif
 ```
 
 Extend a container by installing extra packages with `pip install --user` — your `~/.local` directory is mounted in by default:
@@ -221,16 +221,16 @@ To verify a container's NCCL networking is working correctly with Slingshot:
 
 ```bash
 # Benchmark with native Slingshot (expected ~149 GB/s busbw at 1GB)
-uv run benchmark-networking vllm-lens-0.22.1_0.4.0.sif
+uv run benchmark-networking vllm-lens-0.23.0_0.1.0.sif
 
 # Benchmark with TCP sockets as a baseline (expected ~13 GB/s)
-uv run benchmark-networking vllm-lens-0.22.1_0.4.0.sif --backend tcp
+uv run benchmark-networking vllm-lens-0.23.0_0.1.0.sif --backend tcp
 
 # Use more nodes
 uv run benchmark-networking pytorch-2.11.0-cu1302_0.1.0.sif --nodes 4
 
 # Interactive partition
-uv run benchmark-networking vllm-lens-0.22.1_0.4.0.sif --interactive
+uv run benchmark-networking vllm-lens-0.23.0_0.1.0.sif --interactive
 ```
 
 Container names are resolved from the sifter registry automatically. Logs are written to `logs/`.

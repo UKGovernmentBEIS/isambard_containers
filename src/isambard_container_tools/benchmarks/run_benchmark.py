@@ -1,10 +1,10 @@
 """Submit a NCCL networking benchmark to SLURM.
 
 Usage:
-    benchmark-networking vllm-lens-0.17.0_0.4.0.sif
-    benchmark-networking vllm-lens-0.17.0_0.4.0.sif --backend tcp
-    benchmark-networking vllm-lens-0.17.0_0.4.0.sif --nodes 4
-    benchmark-networking vllm-lens-0.17.0_0.4.0.sif --reservation interactive
+    benchmark-networking vllm-lens-0.23.0_0.1.0.sif
+    benchmark-networking vllm-lens-0.23.0_0.1.0.sif --backend tcp
+    benchmark-networking vllm-lens-0.23.0_0.1.0.sif --nodes 4
+    benchmark-networking vllm-lens-0.23.0_0.1.0.sif --reservation interactive
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ class Backend(str, Enum):
 def main(
     container: Annotated[
         str,
-        typer.Argument(help="Container name or path (e.g. vllm-lens-0.17.0_0.4.0.sif)"),
+        typer.Argument(help="Container name or path (e.g. vllm-lens-0.23.0_0.1.0.sif)"),
     ],
     backend: Annotated[
         Backend,

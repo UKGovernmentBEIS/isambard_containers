@@ -1,7 +1,7 @@
 # Isambard Containers Build Manifest
 #
 # Build all:     sifter build --all
-# Build one:     sifter build vllm-0.17.1
+# Build one:     sifter build vllm-0.23.0
 # Preview:       sifter build --all --dry-run
 # Push (signed):  sifter push --release   (to the OCI/ECR registry in SIFTER_REGISTRIES)
 # Pull (verify):  sifter pull vllm-0.23.0_0.1.0.sif
