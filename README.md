@@ -52,6 +52,15 @@ sifter pull vllm-0.22.1_0.4.0.sif
 
 The helper scripts resolve container names from the sifter registry automatically, so once a container is built or pulled you can refer to models rather than `.sif` paths.
 
+> **Build does not auto-pull (or auto-push) with the OCI/ECR registry.** `sifter build` builds locally only; it won't fetch a dependency from the registry to save a rebuild, and it won't publish results. If a base image isn't already local, `sifter pull` it first — otherwise it's rebuilt from scratch:
+>
+> ```bash
+> sifter pull pytorch-2.11.0-cu1302_0.1.0.sif   # then build something on top
+> sifter build vllm-0.23.0
+> ```
+>
+> Publishing is always explicit: `sifter push`. (Registry-driven auto-pull is a sifter v2 feature.)
+
 ## Use Containers
 
 ### Serve a model with vLLM
