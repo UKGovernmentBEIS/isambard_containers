@@ -58,8 +58,7 @@ The helper scripts resolve container names from the sifter registry automaticall
 > sifter pull pytorch-2.11.0-cu1302_0.1.0.sif   # then build something on top
 > sifter build vllm-0.23.0
 > ```
->
-> Publishing is always explicit: `sifter push`. (Registry-driven auto-pull is a sifter v2 feature.)
+
 
 ## Use Containers
 
