@@ -40,7 +40,7 @@
 [tool.uv]
     environments=["sys_platform == 'linux'"]
     [tool.uv.sources]
-        sifter-build=[{git="https://github.com/UKGovernmentBEIS/sifter.git", branch="dan/oci-ecr-signing"}]
+        sifter-build=[{git="https://github.com/UKGovernmentBEIS/sifter.git"}]
         torch=[{index="pytorch-cu126", marker="sys_platform == 'linux'"}]
 
 [dependency-groups]
