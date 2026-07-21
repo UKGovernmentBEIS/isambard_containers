@@ -31,7 +31,7 @@ This gives you the helper scripts (`vllm-serve`, `benchmark-networking`, …) an
 > [!NOTE]
 > **AISI users can usually skip this.** The standard containers are already built and published to the shared registry, so `vllm-serve` and friends will resolve them automatically. You only need to build if you're outside AISI, or are adding/modifying a container definition.
 
-Containers are built with [Sifter](https://github.com/UKGovernmentBEIS/sifter), a CLI for building Apptainer containers on HPC with Slurm and S3 registry support. Builds are defined in [sifter.yaml](sifter.yaml).
+Containers are built with [Sifter](https://github.com/UKGovernmentBEIS/sifter), a CLI for building Apptainer containers on HPC with Slurm and a signed OCI/ECR registry (cosign sign-on-push, verify-on-pull). Builds are defined in [sifter.yaml](sifter.yaml).
 
 ```bash
 # Clone this repo
@@ -40,17 +40,32 @@ git clone https://github.com/UKGovernmentBEIS/isambard_containers.git
 # Install sifter
 uv tool install git+https://github.com/UKGovernmentBEIS/sifter.git
 
+# Install cosign (>= 3.0.0) and oras — sifter needs them to sign/verify and
+# push/pull images to the OCI/ECR registry. On AISI dev VMs / Isambard these are
+# installed for you by `aisi isambard setup --bootstrap`. To install manually
+# (arm64 builds, for Isambard/Grace Hopper — use *_amd64 elsewhere):
+curl -sL https://github.com/sigstore/cosign/releases/download/v3.1.1/cosign-linux-arm64 -o ~/.local/bin/cosign && chmod u+x ~/.local/bin/cosign
+curl -sL https://github.com/oras-project/oras/releases/download/v1.3.2/oras_1.3.2_linux_arm64.tar.gz | tar -xz -C ~/.local/bin oras
+
 # Build everything in sifter.yaml (or preview with --dry-run)
 sifter build --all
 
 # Build a single container
-sifter build vllm-0.22.1_0.4.0
+sifter build vllm-0.23.0
 
 # Pull a pre-built container from the registry (AISI)
-sifter pull vllm-0.22.1_0.4.0.sif
+sifter pull vllm-0.23.0_0.1.0.sif
 ```
 
 The helper scripts resolve container names from the sifter registry automatically, so once a container is built or pulled you can refer to models rather than `.sif` paths.
+
+> **Build does not auto-pull (or auto-push) with the OCI/ECR registry.** `sifter build` builds locally only; it won't fetch a dependency from the registry to save a rebuild, and it won't publish results. If a base image isn't already local, `sifter pull` it first — otherwise it's rebuilt from scratch:
+>
+> ```bash
+> sifter pull pytorch-2.11.0-cu1302_0.1.0.sif   # then build something on top
+> sifter build vllm-0.23.0
+> ```
+
 
 ## Use Containers
 
@@ -170,7 +185,7 @@ We don't ship a default training launcher/slurm template.
 You don't have to use the helper scripts — you can `singularity exec` the `.sif` files yourself and build your own containers on top. Set `CONTAINER` to a built/pulled image (see [sifter.yaml](sifter.yaml) for current versions):
 
 ```bash
-export CONTAINER=vllm-0.22.1_0.4.0.sif
+export CONTAINER=vllm-0.23.0_0.1.0.sif
 ```
 
 Extend a container by installing extra packages with `pip install --user` — your `~/.local` directory is mounted in by default:
@@ -206,16 +221,16 @@ To verify a container's NCCL networking is working correctly with Slingshot:
 
 ```bash
 # Benchmark with native Slingshot (expected ~149 GB/s busbw at 1GB)
-uv run benchmark-networking vllm-lens-0.22.1_0.4.0.sif
+uv run benchmark-networking vllm-lens-0.23.0_0.1.0.sif
 
 # Benchmark with TCP sockets as a baseline (expected ~13 GB/s)
-uv run benchmark-networking vllm-lens-0.22.1_0.4.0.sif --backend tcp
+uv run benchmark-networking vllm-lens-0.23.0_0.1.0.sif --backend tcp
 
 # Use more nodes
 uv run benchmark-networking pytorch-2.11.0-cu1302_0.1.0.sif --nodes 4
 
 # Interactive partition
-uv run benchmark-networking vllm-lens-0.22.1_0.4.0.sif --interactive
+uv run benchmark-networking vllm-lens-0.23.0_0.1.0.sif --interactive
 ```
 
 Container names are resolved from the sifter registry automatically. Logs are written to `logs/`.

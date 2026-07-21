@@ -1202,7 +1202,7 @@ dependencies = [
     { name = "python-dotenv", marker = "sys_platform == 'linux'" },
     { name = "pyyaml", marker = "sys_platform == 'linux'" },
     { name = "rich", marker = "sys_platform == 'linux'" },
-    { name = "sifter", marker = "sys_platform == 'linux'" },
+    { name = "sifter-build", marker = "sys_platform == 'linux'" },
     { name = "typer", marker = "sys_platform == 'linux'" },
 ]
 
@@ -1229,7 +1229,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "rich", specifier = "==15.0.0" },
-    { name = "sifter", git = "https://github.com/UKGovernmentBEIS/sifter.git" },
+    { name = "sifter-build", git = "https://github.com/UKGovernmentBEIS/sifter.git?branch=dan%2Foci-ecr-signing" },
     { name = "typer", specifier = "==0.26.7" },
 ]
 provides-extras = ["download"]
@@ -3117,9 +3117,9 @@ wheels = [
 ]
 
 [[package]]
-name = "sifter"
+name = "sifter-build"
 version = "0.2.0"
-source = { git = "https://github.com/UKGovernmentBEIS/sifter.git#fa5b6f187035b61947df809dba304b755c038019" }
+source = { git = "https://github.com/UKGovernmentBEIS/sifter.git?branch=dan%2Foci-ecr-signing#689d1e2fb47e0bc3a275fb5d1fbc9d8e2883d27d" }
 dependencies = [
     { name = "humanize", marker = "sys_platform == 'linux'" },
     { name = "pydantic-settings", marker = "sys_platform == 'linux'" },
