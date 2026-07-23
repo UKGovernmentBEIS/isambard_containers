@@ -3119,7 +3119,7 @@ wheels = [
 [[package]]
 name = "sifter-build"
 version = "0.3.0"
-source = { git = "https://github.com/UKGovernmentBEIS/sifter.git#cc36b103ebb7ae7c039816be3f1e5297c27ca464" }
+source = { git = "https://github.com/UKGovernmentBEIS/sifter.git#79455a620c09af0255d8e74948bbe4fbcf4a2610" }
 dependencies = [
     { name = "humanize", marker = "sys_platform == 'linux'" },
     { name = "pydantic-settings", marker = "sys_platform == 'linux'" },
