@@ -31,14 +31,14 @@ This gives you the helper scripts (`vllm-serve`, `benchmark-networking`, …) an
 > [!NOTE]
 > **AISI users can usually skip this.** The standard containers are already built and published to the shared registry, so `vllm-serve` and friends will resolve them automatically. You only need to build if you're outside AISI, or are adding/modifying a container definition.
 
-Containers are built with [Sifter](https://github.com/UKGovernmentBEIS/sifter), a CLI for building Apptainer containers on HPC with Slurm and a signed OCI/ECR registry (cosign sign-on-push, verify-on-pull). Builds are defined in [sifter.yaml](sifter.yaml).
+Containers are built with [Sifter](https://github.com/AI-Safety-Institute/sifter), a CLI for building Apptainer containers on HPC with Slurm and a signed OCI/ECR registry (cosign sign-on-push, verify-on-pull). Builds are defined in [sifter.yaml](sifter.yaml).
 
 ```bash
 # Clone this repo
 git clone https://github.com/UKGovernmentBEIS/isambard_containers.git
 
 # Install sifter
-uv tool install git+https://github.com/UKGovernmentBEIS/sifter.git
+uv tool install git+https://github.com/AI-Safety-Institute/sifter.git@0.5.0
 
 # Install cosign (>= 3.0.0) and oras — sifter needs them to sign/verify and
 # push/pull images to the OCI/ECR registry. On AISI dev VMs / Isambard these are
