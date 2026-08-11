@@ -3,8 +3,8 @@
         "python-dotenv==1.2.2",
         "pyyaml==6.0.3",
         "rich==15.0.0",
-        "sifter-build==0.3.0",
-        "typer==0.26.7",
+        "sifter-build==0.5.0",
+        "typer==0.27.1",
     ]
     description="Isambard HPC container management utilities"
     license="MIT"
@@ -40,7 +40,7 @@
 [tool.uv]
     environments=["sys_platform == 'linux'"]
     [tool.uv.sources]
-        sifter-build=[{git="https://github.com/UKGovernmentBEIS/sifter.git"}]
+        sifter-build=[{git="https://github.com/AI-Safety-Institute/sifter.git", tag="0.5.0"}]
         torch=[{index="pytorch-cu126", marker="sys_platform == 'linux'"}]
 
 [dependency-groups]
