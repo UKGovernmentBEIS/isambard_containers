@@ -1,5 +1,15 @@
 # TRL Container Changelog
 
+## 1.8.0 / 0.2.8 (2026-07-16)
+
+- Bump TRL to 1.8.0 (from 1.7.0) and rebuild on the `vllm-0.25.1_0.1.0` base
+  (rebased from `vllm-0.23.0_0.1.0`). unsloth/unsloth_zoo remain unpinned and
+  `--no-deps`, so they pick up their latest release (2026.7.3) automatically —
+  their stale caps now read `datasets<4.4.0, trl<=0.24.0, transformers<=5.5.0,
+  torch<2.11.0`, all bypassed by `--no-deps`.
+- Bump the `datasets` constraint/floor from `>=4.5.0` to `>=4.7.0` to match TRL
+  1.8.0's `datasets>=4.7.0` requirement.
+
 ## 1.5.1 / 0.2.7 (2026-06-03)
 
 - Bump TRL to 1.5.1 (from 1.4.0) and rebuild on the `vllm-0.22.1_0.4.0` base

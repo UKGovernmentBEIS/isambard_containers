@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- vLLM 0.25.1 support (`vllm-0.25.1_0.1.0`, `vllm-lens-0.25.1_0.1.0`, `trl-1.8.0_0.1.0`). vLLM 0.25.1 still pins `torch==2.11.0` on CUDA 13.0.2 and keeps `DEEPEP_COMMIT=73b6ea4`, so the `pytorch-2.11.0-cu1302` base is unchanged and the only `vllm.def` edit is the FlashInfer default bump below.
+
+### Changed
+
+- FlashInfer bumped to 0.6.13 (from 0.6.12) to match vLLM 0.25.1's `requirements/cuda.txt` pin (also updated as the `vllm.def` default).
+- Bumped transformers override to 5.14.1 (from 5.12.1) on the stable + lens builds, tracking the latest transformers release. Satisfies vLLM 0.25.1's `transformers >= 5.5.3`.
+- TRL bumped to 1.8.0 (from 1.7.0). vllm-lens stays at 1.1.0 (already latest; requires `vllm>=0.16.0`).
+
+### Added
+
 - vLLM 0.23.0 support (`vllm-0.23.0_0.1.0`, `vllm-lens-0.23.0_0.1.0`, `trl-1.6.0_0.1.0`). vLLM 0.23.0 still pins `torch==2.11.0` on CUDA 13.0.2 and keeps `DEEPEP_COMMIT=73b6ea4`, so the `pytorch-2.11.0-cu1302` base is unchanged and the only `vllm.def` edit is the FlashInfer default bump below. New runtime deps in vLLM's `requirements/cuda.txt` (`tilelang`, `apache-tvm-ffi`, `nvidia-cutlass-dsl[cu13]`, `quack-kernels`, `tokenspeed-mla`, `humming-kernels[cu13]`) are pulled in automatically by the wheel install.
 
 ### Changed

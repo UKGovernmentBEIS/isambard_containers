@@ -12,7 +12,7 @@ Bootstrap: localimage
 From: {{ BASE_IMAGE }}
 
 %arguments
-    TRL_VERSION=0.29.1
+    TRL_VERSION=1.8.0
     TRL_EXTRAS=peft,deepspeed,liger,quantization,kernels
     INSTALL_AISI_INSPECT_TOOLS=true
 
@@ -43,14 +43,14 @@ From: {{ BASE_IMAGE }}
     echo "vllm==${VLLM_VER}" > /tmp/constraints.txt
     echo "torch==${TORCH_VER}" >> /tmp/constraints.txt
     echo "transformers==${TRANSFORMERS_VER}" >> /tmp/constraints.txt
-    echo "datasets>=4.5.0" >> /tmp/constraints.txt
+    echo "datasets>=4.7.0" >> /tmp/constraints.txt
     echo "trl=={{ TRL_VERSION }}" >> /tmp/constraints.txt
 
     # Install TRL training stack
     # unsloth/rapidfireai are pure-Python (py3-none-any), aarch64-safe
     pip install -c /tmp/constraints.txt \
         "trl[{{ TRL_EXTRAS }}]=={{ TRL_VERSION }}" \
-        "datasets>=4.5.0" \
+        "datasets>=4.7.0" \
         "inspect-ai>=0.3.199" \
         "inspect-evals>=0.3.106" \
         "openai>=2.29.0" \
@@ -62,8 +62,9 @@ From: {{ BASE_IMAGE }}
     # constraint is stale and all actual runtime deps are already present.
     pip install -c /tmp/constraints.txt --no-deps "rapidfireai>=0.15.2"
 
-    # unsloth and unsloth_zoo both declare stale constraints (datasets<4.4.0, trl<0.29);
-    # install both with --no-deps to skip those, then add any genuinely missing deps
+    # unsloth and unsloth_zoo both declare stale constraints (datasets<4.4.0,
+    # trl<=0.24.0, transformers<=5.5.0, torch<2.11.0); install both with
+    # --no-deps to skip those, then add any genuinely missing deps
     pip install -c /tmp/constraints.txt --no-deps "unsloth[base]"
     pip install -c /tmp/constraints.txt --no-deps "unsloth_zoo[base]"
     # cut_cross_entropy, torchao, triton-kernels are unsloth_zoo runtime deps not already present
